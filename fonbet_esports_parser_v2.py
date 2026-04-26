@@ -13,24 +13,38 @@ def get_fonbet_esports_odds():
             options.add_argument('--headless=new')
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--disable-software-rasterizer')
+            options.add_argument('--disable-extensions')
+            options.add_argument('--disable-setuid-sandbox')
+            options.add_argument('--memory-pressure-off')
+            options.add_argument('--max_old_space_size=256')
+            options.add_argument('--single-process')
+            options.add_argument('--no-zygote')
             options.add_argument('--disable-blink-features=AutomationControlled')
             options.add_argument('--window-size=1280,800')
             options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
             options.add_argument('--disable-features=RendererCodeIntegrity')
-            options.add_argument('--disable-gpu')
             options.add_argument('--remote-debugging-port=0')
 
             options.binary_location = "/usr/bin/chromium"
 
-            # Прямой путь к chromedriver (убедитесь, что он есть)
             service = Service("/usr/bin/chromedriver")
 
             driver = webdriver.Chrome(service=service, options=options)
+            driver.set_page_load_timeout(30)
             driver.get('https://fon.bet/sports/esports?lang=ru')
-            print("Жду загрузки 12 секунд...")
-            time.sleep(12)
+            print("Жду загрузки 15 секунд...")
+            time.sleep(15)
+
+            # Проверка, что страница загрузилась
+            if "fon.bet" not in driver.current_url:
+                raise Exception("Страница не загрузилась")
 
             body_text = driver.find_element("tag name", "body").text
+            if len(body_text) < 100:
+                raise Exception("Получен пустой текст страницы")
+
             lines = body_text.split('\n')
             events = []
             i = 0
@@ -72,7 +86,7 @@ def get_fonbet_esports_odds():
             print(f"Попытка {attempt+1} не удалась: {e}")
             if driver:
                 driver.quit()
-            time.sleep(3)
+            time.sleep(5)
         finally:
             if driver:
                 driver.quit()
