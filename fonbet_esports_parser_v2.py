@@ -1,50 +1,44 @@
 import time
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 import re
+# Импортируем pyvirtualdisplay
+from pyvirtualdisplay import Display
+import undetected_chromedriver as uc
 
 def get_fonbet_esports_odds():
     print("Fonbet Esports: запуск парсера...")
     driver = None
+    # Запускаем виртуальный дисплей
+    display = Display(visible=0, size=(1920, 1080))
+    display.start()
+    print("  Виртуальный дисплей запущен.")
 
     for attempt in range(3):
         try:
-            options = webdriver.ChromeOptions()
-            options.add_argument('--headless=new')
+            # Используем uc.Chrome() вместо старого webdriver
+            # Патчим под последний хром, убираем лишнее.
+            options = uc.ChromeOptions()
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
-            options.add_argument('--disable-software-rasterizer')
-            options.add_argument('--disable-extensions')
-            options.add_argument('--disable-setuid-sandbox')
-            options.add_argument('--memory-pressure-off')
-            options.add_argument('--max_old_space_size=256')
-            options.add_argument('--single-process')
-            options.add_argument('--no-zygote')
-            options.add_argument('--disable-blink-features=AutomationControlled')
-            options.add_argument('--window-size=1280,800')
+            options.add_argument('--window-size=1920,1080')
             options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            # Отключаем отладочные фичи, которые могли мешать
+            options.add_argument('--disable-blink-features=AutomationControlled')
             options.add_argument('--disable-features=RendererCodeIntegrity')
-            options.add_argument('--remote-debugging-port=0')
-
+            # Явно указываем, где лежит браузер
             options.binary_location = "/usr/bin/chromium"
 
-            service = Service("/usr/bin/chromedriver")
+            print(f"  Попытка {attempt+1}: запуск undetected-chromedriver...")
+            driver = uc.Chrome(options=options, version_main=147)
 
-            driver = webdriver.Chrome(service=service, options=options)
-            driver.set_page_load_timeout(30)
+            driver.set_page_load_timeout(45)
             driver.get('https://fon.bet/sports/esports?lang=ru')
-            print("Жду загрузки 15 секунд...")
-            time.sleep(15)
+            print("  Жду загрузки (18 секунд)...")
+            time.sleep(18)
 
-            # Проверка, что страница загрузилась
-            if "fon.bet" not in driver.current_url:
-                raise Exception("Страница не загрузилась")
-
+            # ... (остальной код парсинга без изменений) ...
+            # Извлекаем текст страницы ровно так же, как и было.
             body_text = driver.find_element("tag name", "body").text
-            if len(body_text) < 100:
-                raise Exception("Получен пустой текст страницы")
-
             lines = body_text.split('\n')
             events = []
             i = 0
@@ -83,13 +77,15 @@ def get_fonbet_esports_odds():
             return events
 
         except Exception as e:
-            print(f"Попытка {attempt+1} не удалась: {e}")
+            print(f"  Попытка {attempt+1} не удалась: {e}")
             if driver:
                 driver.quit()
-            time.sleep(5)
+            time.sleep(8)
         finally:
             if driver:
                 driver.quit()
 
     print("❌ Fonbet Esports: не удалось запустить Chrome после 3 попыток.")
+    # Останавливаем виртуальный дисплей в конце
+    display.stop()
     return []
