@@ -2,7 +2,6 @@ import time
 import os
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 import re
 
 def get_fonbet_esports_odds():
@@ -22,11 +21,12 @@ def get_fonbet_esports_odds():
             options.add_argument('--disable-gpu')
             options.add_argument('--remote-debugging-port=0')
 
-            # Задаём путь к Chromium (для Linux-окружения)
+            # Путь к Chromium (из Dockerfile)
             options.binary_location = "/usr/bin/chromium"
 
-            # Устанавливаем драйвер
-            service = Service(ChromeDriverManager().install())
+            # Используем системный chromedriver (устанавливается вместе с chromium-driver)
+            service = Service(executable_path="/usr/bin/chromedriver")
+
             driver = webdriver.Chrome(service=service, options=options)
             driver.get('https://fon.bet/sports/esports?lang=ru')
             print("Жду загрузки 12 секунд...")
