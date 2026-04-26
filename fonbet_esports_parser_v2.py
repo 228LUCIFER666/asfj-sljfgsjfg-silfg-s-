@@ -7,7 +7,6 @@ from pyvirtualdisplay import Display
 def get_fonbet_esports_odds():
     print("Fonbet Esports: запуск парсера...")
     driver = None
-    # Запускаем виртуальный дисплей
     display = Display(visible=0, size=(1920, 1080))
     display.start()
     print("  Виртуальный дисплей запущен.")
@@ -30,7 +29,6 @@ def get_fonbet_esports_odds():
             print("  Жду загрузки (18 секунд)...")
             time.sleep(18)
 
-            # Парсинг
             body_text = driver.find_element("tag name", "body").text
             lines = body_text.split('\n')
             events = []
