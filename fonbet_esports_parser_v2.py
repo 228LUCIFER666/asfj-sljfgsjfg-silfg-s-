@@ -2,12 +2,14 @@ import time
 import re
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from pyvirtualdisplay import Display
+
+# В глобальной области видимости
+
 
 def get_fonbet_esports_odds():
     print("Fonbet Esports: запуск парсера...")
     driver = None
-    display = Display(visible=0, size=(1920, 1080))
+    display = Display(visible=0, size=(1920,1080))
     display.start()
     print("  Виртуальный дисплей запущен.")
 
