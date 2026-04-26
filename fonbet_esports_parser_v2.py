@@ -9,13 +9,11 @@ from selenium.webdriver.chrome.service import Service
 def get_fonbet_esports_odds():
     print("Fonbet Esports: запуск парсера...")
     driver = None
-    display = Display(visible=0, size=(1920,1080))
-    display.start()
-    print("  Виртуальный дисплей запущен.")
 
     for attempt in range(3):
         try:
             options = webdriver.ChromeOptions()
+            options.add_argument('--headless=new')  # ВАЖНО
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
@@ -79,5 +77,4 @@ def get_fonbet_esports_odds():
                 driver.quit()
 
     print("❌ Fonbet Esports: не удалось запустить Chrome после 3 попыток.")
-    display.stop()
     return []
