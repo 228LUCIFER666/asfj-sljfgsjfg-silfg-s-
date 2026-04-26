@@ -2,5 +2,4 @@ selenium
 beautifulsoup4
 requests
 urllib3
-undetected-chromedriver
 pyvirtualdisplay

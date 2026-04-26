@@ -1,8 +1,8 @@
 import time
 import re
-# Импортируем pyvirtualdisplay
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from pyvirtualdisplay import Display
-import undetected_chromedriver as uc
 
 def get_fonbet_esports_odds():
     print("Fonbet Esports: запуск парсера...")
@@ -14,30 +14,23 @@ def get_fonbet_esports_odds():
 
     for attempt in range(3):
         try:
-            # Используем uc.Chrome() вместо старого webdriver
-            # Патчим под последний хром, убираем лишнее.
-            options = uc.ChromeOptions()
+            options = webdriver.ChromeOptions()
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
             options.add_argument('--window-size=1920,1080')
             options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-            # Отключаем отладочные фичи, которые могли мешать
             options.add_argument('--disable-blink-features=AutomationControlled')
-            options.add_argument('--disable-features=RendererCodeIntegrity')
-            # Явно указываем, где лежит браузер
             options.binary_location = "/usr/bin/chromium"
 
-            print(f"  Попытка {attempt+1}: запуск undetected-chromedriver...")
-            driver = uc.Chrome(options=options, version_main=147)
-
+            service = Service("/usr/bin/chromedriver")
+            driver = webdriver.Chrome(service=service, options=options)
             driver.set_page_load_timeout(45)
             driver.get('https://fon.bet/sports/esports?lang=ru')
             print("  Жду загрузки (18 секунд)...")
             time.sleep(18)
 
-            # ... (остальной код парсинга без изменений) ...
-            # Извлекаем текст страницы ровно так же, как и было.
+            # Парсинг
             body_text = driver.find_element("tag name", "body").text
             lines = body_text.split('\n')
             events = []
@@ -86,6 +79,5 @@ def get_fonbet_esports_odds():
                 driver.quit()
 
     print("❌ Fonbet Esports: не удалось запустить Chrome после 3 попыток.")
-    # Останавливаем виртуальный дисплей в конце
     display.stop()
     return []
