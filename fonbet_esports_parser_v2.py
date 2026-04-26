@@ -25,7 +25,7 @@ def get_fonbet_esports_odds():
             options.add_argument("--disable-gpu")
             options.add_argument("--window-size=1920,1080")
 
-            # 🔥 СТАБИЛЬНОСТЬ (КРИТИЧНО)
+            # 🔥 СТАБИЛЬНОСТЬ
             options.add_argument("--single-process")
             options.add_argument("--no-zygote")
             options.add_argument("--disable-extensions")
@@ -54,4 +54,88 @@ def get_fonbet_esports_odds():
             try:
                 driver.get(url)
             except Exception as e:
-               
+                print("  Ошибка загрузки:", e)
+                driver.quit()
+                continue
+
+            print("  Жду загрузки...")
+
+            try:
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+            except:
+                print("  Страница не загрузилась")
+                driver.quit()
+                continue
+
+            time.sleep(3)
+
+            body_text = driver.find_element(By.TAG_NAME, "body").text
+            lines = body_text.split('\n')
+
+            events = []
+            i = 0
+
+            while i < len(lines) - 3:
+                line = lines[i].strip()
+
+                if '—' in line:
+                    parts = line.split('—')
+
+                    if len(parts) == 2:
+                        team1 = parts[0].strip()
+                        team2 = parts[1].strip()
+
+                        if team1 and team2 and any(c.isalpha() for c in team1) and any(c.isalpha() for c in team2):
+
+                            j = i + 1
+                            odds_found = []
+
+                            while j < len(lines) and len(odds_found) < 2:
+                                curr = lines[j].strip()
+
+                                if not curr or ':' in curr or '—' in curr:
+                                    j += 1
+                                    continue
+
+                                numbers = re.findall(r'\b\d+\.\d+\b', curr)
+
+                                for num in numbers:
+                                    val = float(num)
+                                    if val > 1.0:
+                                        odds_found.append(val)
+                                        if len(odds_found) == 2:
+                                            break
+
+                                j += 1
+
+                            if len(odds_found) >= 2:
+                                match_name = f"{team1} vs {team2}"
+                                events.append({
+                                    "match": match_name,
+                                    "odds": odds_found[:2]
+                                })
+
+                                print(f"  {match_name} | {odds_found[0]}, {odds_found[1]}")
+
+                                i = j
+                                continue
+
+                i += 1
+
+            print(f"Fonbet Esports: собрано {len(events)} матчей.")
+            return events
+
+        except Exception as e:
+            print(f"  Попытка {attempt+1} не удалась: {e}")
+            if driver:
+                driver.quit()
+            time.sleep(5)
+
+        finally:
+            if driver:
+                driver.quit()
+
+    print("❌ Fonbet Esports: не удалось запустить Chrome после 3 попыток.")
+    return []
