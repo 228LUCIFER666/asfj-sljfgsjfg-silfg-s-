@@ -1,5 +1,4 @@
-selenium
-beautifulsoup4
 requests
-undetected-chromedriver
-pyvirtualdisplay
+beautifulsoup4
+urllib3
+python-telegram-bot==20.7

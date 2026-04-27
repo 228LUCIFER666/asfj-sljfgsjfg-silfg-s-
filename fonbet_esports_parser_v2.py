@@ -1,141 +1,113 @@
-import time
-import re
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import requests
+
+URL = "https://line-lb54-w.bk6bba-resources.com/ma/events/list"
+
+# 🔥 ключевые слова для киберспорта
+ESPORTS_KEYWORDS = [
+    "esports", "gaming", "team", "academy", "clan",
+    "navi", "g2", "fnatic", "vitality", "faze",
+    "liquid", "astralis", "heroic", "spirit",
+    "valorant", "cs", "dota", "league"
+]
 
 
 def get_fonbet_esports_odds():
-    print("Fonbet Esports: запуск парсера...")
+    print("Fonbet API: запуск...")
 
-    url = "https://fon.bet/sports/esports?lang=ru"
+    try:
+        r = requests.get(URL, params={
+            "lang": "ru",
+            "version": "0",
+            "scopeMarket": "1600"
+        }, timeout=10)
 
-    for attempt in range(3):
-        driver = None
+        if r.status_code != 200:
+            print("Ошибка запроса:", r.status_code)
+            return []
 
-        try:
-            options = webdriver.ChromeOptions()
+        data = r.json()
 
-            # 🔥 БАЗА
-            options.add_argument("--headless=new")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
-            options.add_argument("--window-size=1920,1080")
+        events = data.get("events", [])
+        custom_factors = data.get("customFactors", [])
 
-            # 🔥 СТАБИЛЬНОСТЬ
-            options.add_argument("--single-process")
-            options.add_argument("--no-zygote")
-            options.add_argument("--disable-extensions")
-            options.add_argument("--disable-infobars")
-            options.add_argument("--disable-browser-side-navigation")
-            options.add_argument("--disable-features=VizDisplayCompositor")
+        print(f"events: {len(events)}")
+        print(f"customFactors: {len(custom_factors)}")
 
-            # анти-детект
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_argument("--user-agent=Mozilla/5.0")
+        # 🔥 eventId → коэффициенты
+        odds_by_event = {}
 
-            # 🔥 УБИРАЕМ НАГРУЗКУ
-            prefs = {
-                "profile.managed_default_content_settings.images": 2,
-                "profile.managed_default_content_settings.stylesheets": 2,
-            }
-            options.add_experimental_option("prefs", prefs)
-
-            options.binary_location = "/usr/bin/chromium"
-
-            service = Service("/usr/bin/chromedriver")
-            driver = webdriver.Chrome(service=service, options=options)
-
-            driver.set_page_load_timeout(30)
-
+        for block in custom_factors:
             try:
-                driver.get(url)
-            except Exception as e:
-                print("  Ошибка загрузки:", e)
-                driver.quit()
-                continue
+                event_id = block.get("e") or block.get("eventId")
+                if not event_id:
+                    continue
 
-            print("  Жду загрузки...")
+                factors = block.get("factors", [])
+                odds = []
 
-            try:
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
+                for item in factors:
+                    val = item.get("v")
+
+                    if isinstance(val, (int, float)) and 1.1 < val < 10:
+                        odds.append(val)
+
+                        if len(odds) == 2:
+                            break
+
+                if len(odds) == 2:
+                    odds_by_event[event_id] = odds
+
             except:
-                print("  Страница не загрузилась")
-                driver.quit()
                 continue
 
-            time.sleep(3)
+        print(f"odds_by_event: {len(odds_by_event)}")
 
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-            lines = body_text.split('\n')
+        results = []
 
-            events = []
-            i = 0
+        for ev in events:
+            try:
+                event_id = ev.get("id")
 
-            while i < len(lines) - 3:
-                line = lines[i].strip()
+                if event_id not in odds_by_event:
+                    continue
 
-                if '—' in line:
-                    parts = line.split('—')
+                team1 = ev.get("team1")
+                team2 = ev.get("team2")
 
-                    if len(parts) == 2:
-                        team1 = parts[0].strip()
-                        team2 = parts[1].strip()
+                if not team1 or not team2:
+                    continue
 
-                        if team1 and team2 and any(c.isalpha() for c in team1) and any(c.isalpha() for c in team2):
+                # 🔥 ФИЛЬТР КИБЕРСПОРТА
+                name = f"{team1} {team2}".lower()
+                if not any(k in name for k in ESPORTS_KEYWORDS):
+                    continue
 
-                            j = i + 1
-                            odds_found = []
+                odds = odds_by_event[event_id]
 
-                            while j < len(lines) and len(odds_found) < 2:
-                                curr = lines[j].strip()
+                match = f"{team1} vs {team2}"
+                print(match, odds)
 
-                                if not curr or ':' in curr or '—' in curr:
-                                    j += 1
-                                    continue
+                results.append({
+                    "match": match,
+                    "odds": odds
+                })
 
-                                numbers = re.findall(r'\b\d+\.\d+\b', curr)
+            except:
+                continue
 
-                                for num in numbers:
-                                    val = float(num)
-                                    if val > 1.0:
-                                        odds_found.append(val)
-                                        if len(odds_found) == 2:
-                                            break
+        print(f"\n✅ Найдено матчей: {len(results)}")
+        return results
 
-                                j += 1
+    except Exception as e:
+        print("❌ Глобальная ошибка:", e)
+        return []
 
-                            if len(odds_found) >= 2:
-                                match_name = f"{team1} vs {team2}"
-                                events.append({
-                                    "match": match_name,
-                                    "odds": odds_found[:2]
-                                })
 
-                                print(f"  {match_name} | {odds_found[0]}, {odds_found[1]}")
+if __name__ == "__main__":
+    res = get_fonbet_esports_odds()
 
-                                i = j
-                                continue
+    print("\nРезультат:")
+    for r in res:
+        print(r)
 
-                i += 1
-
-            print(f"Fonbet Esports: собрано {len(events)} матчей.")
-            return events
-
-        except Exception as e:
-            print(f"  Попытка {attempt+1} не удалась: {e}")
-            if driver:
-                driver.quit()
-            time.sleep(5)
-
-        finally:
-            if driver:
-                driver.quit()
-
-    print("❌ Fonbet Esports: не удалось запустить Chrome после 3 попыток.")
-    return []
+    input("\nНажми Enter...")
