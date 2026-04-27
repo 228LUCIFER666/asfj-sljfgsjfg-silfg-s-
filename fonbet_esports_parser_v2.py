@@ -2,14 +2,6 @@ import requests
 
 URL = "https://line-lb54-w.bk6bba-resources.com/ma/events/list"
 
-# 🔥 ключевые слова для киберспорта
-ESPORTS_KEYWORDS = [
-    "esports", "gaming", "team", "academy", "clan",
-    "navi", "g2", "fnatic", "vitality", "faze",
-    "liquid", "astralis", "heroic", "spirit",
-    "valorant", "cs", "dota", "league"
-]
-
 
 def get_fonbet_esports_odds():
     print("Fonbet API: запуск...")
@@ -48,7 +40,8 @@ def get_fonbet_esports_odds():
                 for item in factors:
                     val = item.get("v")
 
-                    if isinstance(val, (int, float)) and 1.1 < val < 10:
+                    # 🔥 нормальный диапазон коэффициентов
+                    if isinstance(val, (int, float)) and 1.2 < val < 5:
                         odds.append(val)
 
                         if len(odds) == 2:
@@ -77,9 +70,15 @@ def get_fonbet_esports_odds():
                 if not team1 or not team2:
                     continue
 
-                # 🔥 ФИЛЬТР КИБЕРСПОРТА
-                name = f"{team1} {team2}".lower()
-                if not any(k in name for k in ESPORTS_KEYWORDS):
+                # 🔥 ФИЛЬТР ПО ТУРНИРУ (главное улучшение)
+                competition = (ev.get("competitionName") or "").lower()
+
+                GOOD_LEAGUES = [
+                    "cs", "dota", "valorant",
+                    "esports", "league", "cup"
+                ]
+
+                if not any(word in competition for word in GOOD_LEAGUES):
                     continue
 
                 odds = odds_by_event[event_id]
