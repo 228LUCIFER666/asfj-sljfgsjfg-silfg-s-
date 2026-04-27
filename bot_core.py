@@ -12,7 +12,7 @@ TOKEN = "YOUR_TOKEN"
 CHAT_ID = "YOUR_CHAT_ID"
 TOTAL_BUDGET = 2000
 
-sent = set()
+sent = {}
 
 # ------------------- LOG -------------------
 def log(msg, level="INFO"):
@@ -32,10 +32,7 @@ def send_message(text):
 
 # ------------------- MATH -------------------
 def calculate_profit(k1, k2):
-    try:
-        return (1 - (1/k1 + 1/k2)) * 100
-    except:
-        return -100
+    return (1 - (1/k1 + 1/k2)) * 100
 
 def calculate_stakes(k1, k2, budget):
     s1 = budget * k2 / (k1 + k2)
@@ -47,6 +44,7 @@ def calculate_stakes(k1, k2, budget):
 def normalize(text):
     text = text.lower()
     text = re.sub(r'\([^)]*\)', '', text)
+    text = re.sub(r'\bacademy\b|\byouth\b|\bteam\b', '', text)
     text = re.sub(r'[^a-z0-9 ]', ' ', text)
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
@@ -71,9 +69,9 @@ def match_events(fb_match, pm_match):
     direct = score(fb1, pm1) + score(fb2, pm2)
     cross = score(fb1, pm2) + score(fb2, pm1)
 
-    return max(direct, cross) >= 2  # 🔥 жесткий фильтр
+    return max(direct, cross) >= 2
 
-# ------------------- MAIN LOGIC -------------------
+# ------------------- MAIN -------------------
 def find_arbs():
     global sent
 
@@ -98,10 +96,10 @@ def find_arbs():
             kf1, kf2 = fb['odds']
             kp1, kp2 = pm['odds']
 
-            # ❌ фильтр мусора
+            # 🔥 фильтр мусора
             if min(kf1, kf2, kp1, kp2) < 1.3:
                 continue
-            if max(kf1, kf2, kp1, kp2) > 5:
+            if max(kf1, kf2, kp1, kp2) > 4.5:
                 continue
 
             p1 = calculate_profit(kf1, kp2)
@@ -109,16 +107,20 @@ def find_arbs():
 
             if p1 > best_profit:
                 best_profit = p1
-                best_data = (kf1, kp2, 1)
+                best_data = (kf1, kp2)
 
             if p2 > best_profit:
                 best_profit = p2
-                best_data = (kf2, kp1, 2)
+                best_data = (kf2, kp1)
 
         match_key = normalize(fb['match'])
 
-        if best_profit > 5 and match_key not in sent:
-            kf, kp, side = best_data
+        # 🔥 анти-спам + обновление только если профит вырос
+        if best_profit > 3:
+            if match_key in sent and sent[match_key] >= best_profit:
+                continue
+
+            kf, kp = best_data
             s1, s2, net = calculate_stakes(kf, kp, TOTAL_BUDGET)
 
             msg = (
@@ -133,7 +135,7 @@ def find_arbs():
             log(f"{fb['match']} | {best_profit:.2f}%", "ARB")
 
             send_message(msg)
-            sent.add(match_key)
+            sent[match_key] = best_profit
 
             sent_now += 1
             if sent_now >= MAX_PER_RUN:
