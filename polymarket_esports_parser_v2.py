@@ -32,13 +32,10 @@ def get_polymarket_esports_odds():
 
                 title_lower = title.lower()
 
-                # ❌ отсекаем мусор по названию
+                # ❌ убираем мусор
                 if any(x in title_lower for x in ["odd", "even"]):
                     continue
 
-                found = False
-
-                # 🔥 ищем ПРАВИЛЬНЫЙ рынок
                 for m in markets:
                     outcomes = m.get('outcomes', [])
                     prices = m.get('outcomePrices', [])
@@ -46,7 +43,7 @@ def get_polymarket_esports_odds():
                     if len(outcomes) < 2 or len(prices) < 2:
                         continue
 
-                    # --- получаем команды ---
+                    # --- команды ---
                     if isinstance(outcomes[0], str):
                         team1 = outcomes[0]
                         team2 = outcomes[1]
@@ -59,13 +56,16 @@ def get_polymarket_esports_odds():
                     team1_l = team1.lower()
                     team2_l = team2.lower()
 
-                    # ❌ убираем мусор
+                    # ❌ мусор команды
                     bad_words = ["yes", "no", "odd", "even"]
                     if any(x in team1_l or x in team2_l for x in bad_words):
                         continue
 
-                    # 🔥 КЛЮЧЕВОЙ ФИЛЬТР — команды должны быть в title
-                    if team1_l not in title_lower and team2_l not in title_lower:
+                    # 🔥 мягкий матчинг с title
+                    def similar(a, b):
+                        return a in b or b in a
+
+                    if not (similar(team1_l, title_lower) or similar(team2_l, title_lower)):
                         continue
 
                     # --- коэффициенты ---
@@ -79,10 +79,6 @@ def get_polymarket_esports_odds():
                         k1 = 1.0 / prob1
                         k2 = 1.0 / prob2
 
-                        # ❌ убираем мусор 2.0 / 2.0
-                        if abs(k1 - 2.0) < 0.01 and abs(k2 - 2.0) < 0.01:
-                            continue
-
                     except:
                         continue
 
@@ -95,11 +91,7 @@ def get_polymarket_esports_odds():
                         'odds': [k1, k2]
                     })
 
-                    found = True
-                    break  # нашли нужный market → выходим
-
-                if not found:
-                    continue
+                    break  # нашли норм рынок — идём к следующему событию
 
             except Exception:
                 continue
