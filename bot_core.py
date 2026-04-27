@@ -1,22 +1,20 @@
 import time
 import requests
-import traceback
 import urllib3
 import re
-
 from fonbet_esports_parser_v2 import get_fonbet_esports_odds
 from polymarket_esports_parser_v2 import get_polymarket_esports_odds
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+urllib3.disable_warnings()
 
-# ------------------- КОНФИГ -------------------
-TOKEN = "ТВОЙ_ТОКЕН"
-CHAT_ID = "ТВОЙ_CHAT_ID"
+# ------------------- CONFIG -------------------
+TOKEN = "YOUR_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 TOTAL_BUDGET = 2000
 
 sent = set()
 
-# ------------------- ЛОГ -------------------
+# ------------------- LOG -------------------
 def log(msg, level="INFO"):
     now = time.strftime("%H:%M:%S")
     print(f"[{now}] {level} | {msg}")
@@ -30,9 +28,9 @@ def send_message(text):
             timeout=10
         )
     except Exception as e:
-        log(f"Telegram ошибка: {e}", "ERROR")
+        log(f"TG error: {e}", "ERROR")
 
-# ------------------- МАТЕМАТИКА -------------------
+# ------------------- MATH -------------------
 def calculate_profit(k1, k2):
     try:
         return (1 - (1/k1 + 1/k2)) * 100
@@ -45,7 +43,7 @@ def calculate_stakes(k1, k2, budget):
     profit = s1 * k1 - budget
     return round(s1, 2), round(s2, 2), round(profit, 2)
 
-# ------------------- УМНЫЙ МАТЧИНГ -------------------
+# ------------------- NORMALIZE -------------------
 def normalize(text):
     text = text.lower()
     text = re.sub(r'\([^)]*\)', '', text)
@@ -59,6 +57,7 @@ def extract_teams(match):
     t1, t2 = match.split(" vs ", 1)
     return normalize(t1), normalize(t2)
 
+# ------------------- MATCHING -------------------
 def match_events(fb_match, pm_match):
     fb1, fb2 = extract_teams(fb_match)
     pm1, pm2 = extract_teams(pm_match)
@@ -72,70 +71,75 @@ def match_events(fb_match, pm_match):
     direct = score(fb1, pm1) + score(fb2, pm2)
     cross = score(fb1, pm2) + score(fb2, pm1)
 
-    return max(direct, cross) >= 1
+    return max(direct, cross) >= 2  # 🔥 жесткий фильтр
 
-# ------------------- ПОИСК ВИЛОК -------------------
+# ------------------- MAIN LOGIC -------------------
 def find_arbs():
     global sent
 
-    log("Проверка вилок...", "INFO")
+    log("Проверка вилок...")
 
-    fonbet_data = get_fonbet_esports_odds()
-    poly_data = get_polymarket_esports_odds()
+    fonbet = get_fonbet_esports_odds()
+    poly = get_polymarket_esports_odds()
 
-    log(f"Fonbet: {len(fonbet_data)}, Polymarket: {len(poly_data)}", "INFO")
+    log(f"Fonbet: {len(fonbet)}, Polymarket: {len(poly)}")
 
-    for fb in fonbet_data:
-        for pm in poly_data:
+    MAX_PER_RUN = 5
+    sent_now = 0
 
+    for fb in fonbet:
+        best_profit = 0
+        best_data = None
+
+        for pm in poly:
             if not match_events(fb['match'], pm['match']):
                 continue
 
-            combos = [
-                (fb['odds'][0], pm['odds'][0]),
-                (fb['odds'][1], pm['odds'][1]),
-                (fb['odds'][0], pm['odds'][1]),
-                (fb['odds'][1], pm['odds'][0]),
-            ]
+            kf1, kf2 = fb['odds']
+            kp1, kp2 = pm['odds']
 
-            best_profit = 0
-            best_data = None
+            # ❌ фильтр мусора
+            if min(kf1, kf2, kp1, kp2) < 1.3:
+                continue
+            if max(kf1, kf2, kp1, kp2) > 5:
+                continue
 
-            for kf, kp in combos:
+            p1 = calculate_profit(kf1, kp2)
+            p2 = calculate_profit(kf2, kp1)
 
-                # фильтр мусора
-                if kf < 1.2 or kp < 1.2:
-                    continue
-                if kf > 10 or kp > 10:
-                    continue
+            if p1 > best_profit:
+                best_profit = p1
+                best_data = (kf1, kp2, 1)
 
-                profit = calculate_profit(kf, kp)
+            if p2 > best_profit:
+                best_profit = p2
+                best_data = (kf2, kp1, 2)
 
-                if profit > best_profit:
-                    s1, s2, net = calculate_stakes(kf, kp, TOTAL_BUDGET)
-                    best_profit = profit
-                    best_data = (kf, kp, s1, s2, net)
+        match_key = normalize(fb['match'])
 
-            if best_profit > 3 and fb['match'] not in sent:
+        if best_profit > 5 and match_key not in sent:
+            kf, kp, side = best_data
+            s1, s2, net = calculate_stakes(kf, kp, TOTAL_BUDGET)
 
-                kf, kp, s1, s2, net = best_data
+            msg = (
+                f"🔥 ВИЛКА\n"
+                f"{fb['match']}\n\n"
+                f"📌 Fonbet: {kf}\n"
+                f"📌 Polymarket: {kp:.2f}\n\n"
+                f"💰 Ставки: {s1} / {s2}\n"
+                f"📈 Профит: {best_profit:.2f}% | +{net} RUB"
+            )
 
-                msg = (
-                    f"🔥 ВИЛКА\n"
-                    f"{fb['match']}\n\n"
-                    f"📌 Fonbet: {round(kf,2)}\n"
-                    f"📌 Polymarket: {round(kp,2)}\n\n"
-                    f"💰 Ставки: {s1} / {s2} RUB\n"
-                    f"📈 Профит: {best_profit:.2f}% | +{net} RUB"
-                )
+            log(f"{fb['match']} | {best_profit:.2f}%", "ARB")
 
-                log(f"{fb['match']} | {best_profit:.2f}%", "ARB")
-                send_message(msg)
+            send_message(msg)
+            sent.add(match_key)
 
-                sent.add(fb['match'])
-                time.sleep(0.5)
+            sent_now += 1
+            if sent_now >= MAX_PER_RUN:
+                return
 
-# ------------------- ГЛАВНЫЙ ЦИКЛ -------------------
+# ------------------- LOOP -------------------
 if __name__ == "__main__":
     log("Бот запущен", "START")
 
@@ -144,6 +148,5 @@ if __name__ == "__main__":
             find_arbs()
         except Exception as e:
             log(f"Ошибка: {e}", "ERROR")
-            traceback.print_exc()
 
         time.sleep(60)
