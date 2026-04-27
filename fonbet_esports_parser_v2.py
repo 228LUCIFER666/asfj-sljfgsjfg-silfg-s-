@@ -71,14 +71,16 @@ def get_fonbet_esports_odds():
                     continue
 
                 # 🔥 ФИЛЬТР ПО ТУРНИРУ (главное улучшение)
+                name = f"{team1} {team2}".lower()
                 competition = (ev.get("competitionName") or "").lower()
 
-                GOOD_LEAGUES = [
-                    "cs", "dota", "valorant",
-                    "esports", "league", "cup"
+                GOOD = [
+                    "cs", "dota", "valorant", "league", "esports",
+                    "gaming", "academy"
                 ]
 
-                if not any(word in competition for word in GOOD_LEAGUES):
+                # ✅ комбинированный фильтр (ключ!)
+                if not any(w in name for w in GOOD) and not any(w in competition for w in GOOD):
                     continue
 
                 odds = odds_by_event[event_id]
