@@ -1,16 +1,19 @@
 import asyncio
 import threading
 import time
+import os
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+
 import bot_core
 from bot_core import find_arbs
 
 # ------------------- КОНФИГ -------------------
-TOKEN = "8481745931:AAG_e4Dijnv_sFoYkXIe0ZFSZ34yeSnuoWs"
-CHAT_ID = "1088479582"
+TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("USER_ID")
 
-# ------------------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ -------------------
+# ------------------- ГЛОБАЛЬНЫЕ -------------------
 monitoring_active = True
 
 # ------------------- КЛАВИАТУРЫ -------------------
@@ -37,94 +40,137 @@ def get_budget_keyboard():
 
 # ------------------- КОМАНДЫ -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "🤖 *VilSS — Бот поиска арбитражных вилок*\n\n"
-        "Я анализирую коэффициенты на киберспортивные матчи и нахожу "
-        "гарантированно прибыльные ситуации (вилки).\n\n"
-        f"📊 *Текущий бюджет:* {bot_core.TOTAL_BUDGET} RUB\n"
-        "🔄 *Мониторинг:* Активен (каждую минуту)\n"
-        "🎮 *Платформы:* Fonbet + Polymarket\n\n"
-        "Используйте кнопки меню для управления ботом 👇"
+    text = (
+        "🤖 *VilSS — Бот вилок*\n\n"
+        f"💰 Бюджет: {bot_core.TOTAL_BUDGET} RUB\n"
+        f"🔄 Мониторинг: {'Активен' if monitoring_active else 'Остановлен'}"
     )
-    await update.message.reply_text(welcome_text, parse_mode='Markdown', reply_markup=get_main_keyboard())
+    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=get_main_keyboard())
 
+# ------------------- CALLBACK -------------------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global monitoring_active
+
     query = update.callback_query
     await query.answer()
     data = query.data
 
+    # 🔥 ПОИСК ВИЛОК (с очисткой)
     if data == "find_arbs":
-        await query.edit_message_text("🔍 Поиск вилок... Пожалуйста, подождите.")
-        def run_search():
+        bot_core.sent.clear()  # ← ВОТ ГЛАВНОЕ
+
+        try:
+            await query.edit_message_text("🔍 Поиск вилок...", reply_markup=get_main_keyboard())
+        except:
+            pass
+
+        def run():
             try:
                 find_arbs()
             except Exception as e:
-                print(f"Ошибка поиска: {e}")
-        threading.Thread(target=run_search).start()
+                print("Ошибка поиска:", e)
+
+        threading.Thread(target=run).start()
+
         await asyncio.sleep(2)
-        await query.edit_message_text("✅ Поиск завершён. Проверьте уведомления!", reply_markup=get_main_keyboard())
 
+        try:
+            await query.edit_message_text("✅ Поиск завершён. Проверьте уведомления!", reply_markup=get_main_keyboard())
+        except:
+            pass
+
+    # -------------------
     elif data == "status":
-        status_text = (
-            "📊 *Статус системы*\n\n"
-            f"🤖 Бот: Активен\n"
-            f"🔄 Мониторинг: {'▶️ Активен' if monitoring_active else '⏸️ Остановлен'}\n"
-            f"💰 Бюджет: {bot_core.TOTAL_BUDGET} RUB\n"
-            f"🎮 Источники: Fonbet + Polymarket\n"
-            f"⏱️ Интервал: 60 секунд"
+        text = (
+            f"📊 Статус\n\n"
+            f"🔄 Мониторинг: {'▶️ Активен' if monitoring_active else '⏸️ Стоп'}\n"
+            f"💰 Бюджет: {bot_core.TOTAL_BUDGET} RUB"
         )
-        await query.edit_message_text(status_text, parse_mode='Markdown', reply_markup=get_main_keyboard())
 
+        try:
+            await query.edit_message_text(text, reply_markup=get_main_keyboard())
+        except:
+            pass
+
+    # -------------------
     elif data == "budget":
-        await query.edit_message_text("💰 Выберите бюджет:", reply_markup=get_budget_keyboard())
+        try:
+            await query.edit_message_text("💰 Выберите бюджет:", reply_markup=get_budget_keyboard())
+        except:
+            pass
 
     elif data.startswith("budget_"):
         amount = int(data.split("_")[1])
         bot_core.TOTAL_BUDGET = amount
-        await query.edit_message_text(f"✅ Бюджет установлен: {amount} RUB", reply_markup=get_main_keyboard())
 
+        try:
+            await query.edit_message_text(f"✅ Бюджет: {amount} RUB", reply_markup=get_main_keyboard())
+        except:
+            pass
+
+    # -------------------
     elif data == "start_monitoring":
+        if monitoring_active:
+            await query.answer("Уже запущен ✅")
+            return
+
         monitoring_active = True
-        await query.edit_message_text("▶️ Мониторинг запущен.", reply_markup=get_main_keyboard())
+
+        try:
+            await query.edit_message_text("▶️ Мониторинг запущен", reply_markup=get_main_keyboard())
+        except:
+            pass
 
     elif data == "stop_monitoring":
-        monitoring_active = False
-        await query.edit_message_text("⏸️ Мониторинг остановлен.", reply_markup=get_main_keyboard())
+        if not monitoring_active:
+            await query.answer("Уже остановлен ⛔")
+            return
 
+        monitoring_active = False
+
+        try:
+            await query.edit_message_text("⏸️ Мониторинг остановлен", reply_markup=get_main_keyboard())
+        except:
+            pass
+
+    # -------------------
     elif data == "help":
-        help_text = (
-            "📖 *Инструкция*\n\n"
-            "🔍 *Поиск вилок* — ручной запуск проверки\n"
-            "📊 *Статус* — просмотр текущих настроек\n"
-            "💰 *Бюджет* — изменение суммы для расчёта ставок\n"
-            "▶️ *Старт/Стоп* — управление автоматическим мониторингом"
-        )
-        await query.edit_message_text(help_text, parse_mode='Markdown', reply_markup=get_main_keyboard())
+        text = "📖 Кнопки:\n\n🔍 Поиск — ручной\n▶️ Старт — авто\n⏸️ Стоп — стоп авто"
+
+        try:
+            await query.edit_message_text(text, reply_markup=get_main_keyboard())
+        except:
+            pass
 
     elif data == "back_to_main":
-        await query.edit_message_text("Главное меню:", reply_markup=get_main_keyboard())
+        try:
+            await query.edit_message_text("Главное меню", reply_markup=get_main_keyboard())
+        except:
+            pass
 
-# ------------------- ФОНОВЫЙ МОНИТОРИНГ -------------------
+# ------------------- МОНИТОРИНГ -------------------
 def run_monitoring():
     global monitoring_active
-    from bot_core import find_arbs
+
     while True:
         if monitoring_active:
             try:
                 find_arbs()
             except Exception as e:
-                print(f"Мониторинг ошибка: {e}")
+                print("Ошибка мониторинга:", e)
+
         time.sleep(60)
 
 # ------------------- MAIN -------------------
 def main():
     threading.Thread(target=run_monitoring, daemon=True).start()
+
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_callback))
-    print("Telegram бот запущен...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    print("Бот запущен")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
