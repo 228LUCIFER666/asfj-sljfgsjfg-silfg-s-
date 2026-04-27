@@ -65,7 +65,7 @@ def get_polymarket_esports_odds():
                         continue
 
                     # 🔥 КЛЮЧЕВОЙ ФИЛЬТР — команды должны быть в title
-                    if team1_l not in title_lower or team2_l not in title_lower:
+                    if team1_l not in title_lower and team2_l not in title_lower:
                         continue
 
                     # --- коэффициенты ---
