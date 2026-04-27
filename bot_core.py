@@ -10,8 +10,8 @@ from polymarket_esports_parser_v2 import get_polymarket_esports_odds
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ------------------- КОНФИГ -------------------
-TOKEN = "8481745931:AAG_e4Dijnv_sFoYkXIe0ZFSZ34yeSnuoWs"
-CHAT_ID = "1088479582"
+TOKEN = "ТВОЙ_ТОКЕН"
+CHAT_ID = "ТВОЙ_CHAT_ID"
 TOTAL_BUDGET = 2000
 
 sent = set()
@@ -92,37 +92,48 @@ def find_arbs():
                 continue
 
             combos = [
-                (fb['odds'][0], pm['odds'][0], "F1-P1"),
-                (fb['odds'][1], pm['odds'][1], "F2-P2"),
-                (fb['odds'][0], pm['odds'][1], "F1-P2"),
-                (fb['odds'][1], pm['odds'][0], "F2-P1"),
+                (fb['odds'][0], pm['odds'][0]),
+                (fb['odds'][1], pm['odds'][1]),
+                (fb['odds'][0], pm['odds'][1]),
+                (fb['odds'][1], pm['odds'][0]),
             ]
 
-            for kf, kp, tag in combos:
+            best_profit = 0
+            best_data = None
+
+            for kf, kp in combos:
+
+                # фильтр мусора
+                if kf < 1.2 or kp < 1.2:
+                    continue
+                if kf > 10 or kp > 10:
+                    continue
+
                 profit = calculate_profit(kf, kp)
 
-                if profit > 0.5:
+                if profit > best_profit:
                     s1, s2, net = calculate_stakes(kf, kp, TOTAL_BUDGET)
+                    best_profit = profit
+                    best_data = (kf, kp, s1, s2, net)
 
-                    key = f"{fb['match']}|{tag}"
+            if best_profit > 3 and fb['match'] not in sent:
 
-                    if key in sent:
-                        continue
+                kf, kp, s1, s2, net = best_data
 
-                    msg = (
-                        f"🔥 ВИЛКА\n"
-                        f"{fb['match']}\n\n"
-                        f"📌 Fonbet: {kf}\n"
-                        f"📌 Polymarket: {kp}\n\n"
-                        f"💰 Ставки: {s1} / {s2} RUB\n"
-                        f"📈 Профит: {profit:.2f}% | +{net} RUB"
-                    )
+                msg = (
+                    f"🔥 ВИЛКА\n"
+                    f"{fb['match']}\n\n"
+                    f"📌 Fonbet: {round(kf,2)}\n"
+                    f"📌 Polymarket: {round(kp,2)}\n\n"
+                    f"💰 Ставки: {s1} / {s2} RUB\n"
+                    f"📈 Профит: {best_profit:.2f}% | +{net} RUB"
+                )
 
-                    log(f"{fb['match']} | {tag} | {profit:.2f}%", "ARB")
-                    send_message(msg)
+                log(f"{fb['match']} | {best_profit:.2f}%", "ARB")
+                send_message(msg)
 
-                    sent.add(key)
-                    time.sleep(0.5)
+                sent.add(fb['match'])
+                time.sleep(0.5)
 
 # ------------------- ГЛАВНЫЙ ЦИКЛ -------------------
 if __name__ == "__main__":
