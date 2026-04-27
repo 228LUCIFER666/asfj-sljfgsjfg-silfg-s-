@@ -1,143 +1,157 @@
 import requests
+import json
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
+def get_polymarket_esports_odds():
+    print("=== Polymarket Esports (CS:GO + Dota 2) ===")
 
-# ------------------- RECURSIVE SEARCH -------------------
-def find_events(obj):
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    # ──────────── CS:GO (старый эндпоинт) ────────────
+    cs_url = "https://polymarket.com/_next/data/build-TfctsWXpff2fKS/ru/sports/esports/games.json?league=esports"
+    cs_events = []
+    try:
+        resp = requests.get(cs_url, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            cs_events = find_events_recursive(resp.json())
+            print(f"CS:GO загружено: {len(cs_events)}")
+        else:
+            print(f"CS:GO ошибка {resp.status_code}")
+    except Exception as e:
+        print(f"CS:GO ошибка: {e}")
+
+    # ──────────── Dota 2 (Gamma API) ────────────
+    dota_url = "https://gamma-api.polymarket.com/events?tag_id=102366&closed=false&limit=100"
+    print(f"Запрашиваю Dota 2...")
+    dota_events = []
+    try:
+        resp = requests.get(dota_url, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            raw = resp.json()
+            # Только события с рынками, не закрытые
+            dota_events = [ev for ev in raw if 'markets' in ev and not ev.get('closed')]
+            print(f"Dota 2 загружено: {len(dota_events)}")
+        else:
+            print(f"Dota 2 ошибка {resp.status_code}, пробую с Referer...")
+            headers_ref = headers.copy()
+            headers_ref["Referer"] = "https://polymarket.com/dota-2"
+            resp2 = requests.get(dota_url, headers=headers_ref, timeout=15)
+            if resp2.status_code == 200:
+                dota_events = [ev for ev in resp2.json() if 'markets' in ev and not ev.get('closed')]
+                print(f"Dota 2 (повтор) загружено: {len(dota_events)}")
+    except Exception as e:
+        print(f"Dota 2 ошибка: {e}")
+
+    # ──────────── Парсинг ────────────
+    matches = []
+    matches.extend(parse_cs(cs_events))
+    matches.extend(parse_dota(dota_events))
+
+    print(f"Всего матчей собрано: {len(matches)}")
+    return matches
+
+
+def find_events_recursive(obj):
     results = []
-
     if isinstance(obj, dict):
         if 'title' in obj and 'markets' in obj:
             results.append(obj)
-
         for v in obj.values():
-            results.extend(find_events(v))
-
+            results.extend(find_events_recursive(v))
     elif isinstance(obj, list):
         for item in obj:
-            results.extend(find_events(item))
-
+            results.extend(find_events_recursive(item))
     return results
 
 
-# ------------------- PARSE ONE LEAGUE -------------------
-def parse_league(league):
-    print(f"\nЛига: {league}")
-
-    url = f"https://polymarket.com/_next/data/build-TfctsWXpff2fKS/en/esports/{league}/games.json?league={league}"
-
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-
-        if r.status_code != 200:
-            print("❌ ошибка запроса")
-            return []
-
-        data = r.json()
-
-        events = find_events(data)
-
-        print(f"Найдено событий: {len(events)}")
-
-        matches = []
-
-        for event in events:
-            try:
-                title = event.get('title', '')
-                markets = event.get('markets', [])
-
-                if not markets:
+def parse_cs(events):
+    matches = []
+    for ev in events:
+        try:
+            title = ev['title'].lower()
+            markets = ev.get('markets', [])
+            if not markets:
+                continue
+            if any(x in title for x in ["odd", "even"]):
+                continue
+            for m in markets:
+                outcomes = m.get('outcomes', [])
+                prices = m.get('outcomePrices', [])
+                if len(outcomes) < 2 or len(prices) < 2:
                     continue
-
-                title_lower = title.lower()
-
-                # ❌ мусор
-                if any(x in title_lower for x in ["odd", "even"]):
+                if isinstance(outcomes[0], str):
+                    t1, t2 = outcomes[0], outcomes[1]
+                elif isinstance(outcomes[0], dict):
+                    t1 = outcomes[0].get('title', '')
+                    t2 = outcomes[1].get('title', '')
+                else:
                     continue
-
-                for m in markets:
-                    outcomes = m.get('outcomes', [])
-                    prices = m.get('outcomePrices', [])
-
-                    if len(outcomes) < 2 or len(prices) < 2:
+                t1, t2 = t1.strip(), t2.strip()
+                if any(x in t1.lower() or x in t2.lower() for x in ["yes","no","over","under","odd","even"]):
+                    continue
+                # Soft match
+                if not (t1.lower() in title or t2.lower() in title):
+                    continue
+                try:
+                    p1, p2 = float(prices[0]), float(prices[1])
+                    if p1 <= 0.01 or p2 <= 0.01:
                         continue
+                    k1, k2 = round(1/p1, 2), round(1/p2, 2)
+                except:
+                    continue
+                match_name = f"{t1} vs {t2}"
+                # print(f"  [CS:GO] {match_name}: {k1} / {k2}")
+                matches.append({'match': match_name, 'odds': [k1, k2]})
+                break
+        except:
+            continue
+    return matches
 
-                    # команды
-                    if isinstance(outcomes[0], str):
-                        team1 = outcomes[0]
-                        team2 = outcomes[1]
-                    elif isinstance(outcomes[0], dict):
-                        team1 = outcomes[0].get('title', '')
-                        team2 = outcomes[1].get('title', '')
-                    else:
-                        continue
 
-                    team1_l = team1.lower()
-                    team2_l = team2.lower()
-
-                    # ❌ мусор команды
-                    if any(x in team1_l or x in team2_l for x in ["yes", "no", "odd", "even"]):
-                        continue
-
-                    # --- коэффициенты ---
-                    try:
-                        prob1 = float(prices[0])
-                        prob2 = float(prices[1])
-
-                        if prob1 <= 0.01 or prob2 <= 0.01:
-                            continue
-
-                        k1 = 1.0 / prob1
-                        k2 = 1.0 / prob2
-
-                    except:
-                        continue
-
-                    match_name = f"{team1} vs {team2}"
-
-                    print(f"  {match_name}: {k1:.2f} / {k2:.2f}")
-
-                    matches.append({
-                        'match': match_name,
-                        'odds': [k1, k2]
-                    })
-
+def parse_dota(events):
+    matches = []
+    for ev in events:
+        try:
+            markets = ev.get('markets', [])
+            if not markets:
+                continue
+            # Ищем рынок moneyline (основной исход)
+            winner_market = None
+            for m in markets:
+                if m.get("sportsMarketType") == "moneyline":
+                    winner_market = m
                     break
-
+            if not winner_market:
+                continue
+            raw_out = winner_market.get('outcomes', '[]')
+            raw_pr = winner_market.get('outcomePrices', '[]')
+            try:
+                outcomes = json.loads(raw_out) if isinstance(raw_out, str) else raw_out
+                prices = json.loads(raw_pr) if isinstance(raw_pr, str) else raw_pr
             except:
                 continue
-
-        return matches
-
-    except Exception as e:
-        print(f"Ошибка ({league}): {e}")
-        return []
-
-
-# ------------------- MAIN -------------------
-def get_polymarket_esports_odds():
-    print("Polymarket (CS2 + Dota): загрузка...")
-
-    leagues = ["counter-strike", "dota-2"]
-
-    all_matches = []
-
-    for league in leagues:
-        res = parse_league(league)
-        all_matches.extend(res)
-
-    print(f"\nPolymarket: всего матчей {len(all_matches)}")
-    return all_matches
+            if len(outcomes) < 2 or len(prices) < 2:
+                continue
+            t1, t2 = outcomes[0].strip(), outcomes[1].strip()
+            if any(x in t1.lower() or x in t2.lower() for x in ["yes","no","over","under"]):
+                continue
+            try:
+                p1, p2 = float(prices[0]), float(prices[1])
+                if p1 <= 0.01 or p2 <= 0.01:
+                    continue
+                k1, k2 = round(1/p1, 2), round(1/p2, 2)
+            except:
+                continue
+            match_name = f"{t1} vs {t2}"
+            # print(f"  [Dota 2] {match_name}: {k1} / {k2}")
+            matches.append({'match': match_name, 'odds': [k1, k2]})
+        except:
+            continue
+    return matches
 
 
-# ------------------- TEST -------------------
 if __name__ == "__main__":
     res = get_polymarket_esports_odds()
-
     print("\nРезультат:")
     for r in res:
         print(r)
-
-    input("\nEnter...")
+    input("\nНажми Enter...")

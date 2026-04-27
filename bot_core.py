@@ -1,25 +1,25 @@
 import time
 import requests
-import urllib3
 import re
+import urllib3
 from fonbet_esports_parser_v2 import get_fonbet_esports_odds
 from polymarket_esports_parser_v2 import get_polymarket_esports_odds
 
 urllib3.disable_warnings()
 
-# ------------------- CONFIG -------------------
+# ---------- CONFIG ----------
 TOKEN = "YOUR_TOKEN"
 CHAT_ID = "YOUR_CHAT_ID"
 TOTAL_BUDGET = 2000
+MAX_PER_RUN = 5
 
 sent = {}
 
-# ------------------- LOG -------------------
+# ---------- LOG ----------
 def log(msg, level="INFO"):
-    now = time.strftime("%H:%M:%S")
-    print(f"[{now}] {level} | {msg}")
+    print(f"[{time.strftime('%H:%M:%S')}] {level} | {msg}")
 
-# ------------------- TELEGRAM -------------------
+# ---------- TELEGRAM ----------
 def send_message(text):
     try:
         requests.post(
@@ -30,64 +30,67 @@ def send_message(text):
     except Exception as e:
         log(f"TG error: {e}", "ERROR")
 
-# ------------------- MATH -------------------
-def calculate_profit(k1, k2):
+# ---------- MATH ----------
+def profit(k1, k2):
     return (1 - (1/k1 + 1/k2)) * 100
 
-def calculate_stakes(k1, k2, budget):
+def stakes(k1, k2, budget):
     s1 = budget * k2 / (k1 + k2)
     s2 = budget - s1
-    profit = s1 * k1 - budget
-    return round(s1, 2), round(s2, 2), round(profit, 2)
+    net = s1 * k1 - budget
+    return round(s1, 2), round(s2, 2), round(net, 2)
 
-# ------------------- NORMALIZE -------------------
-def normalize(text):
-    text = text.lower()
-    text = re.sub(r'\([^)]*\)', '', text)
-    text = re.sub(r'\bacademy\b|\byouth\b|\bteam\b', '', text)
-    text = re.sub(r'[^a-z0-9 ]', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
+# ---------- NORMALIZE ----------
+def clean(name):
+    name = name.lower()
+    name = re.sub(r'\([^)]*\)', '', name)
+    name = re.sub(r'\bacademy\b|\byouth\b|\bteam\b|\besports\b|\bgaming\b', '', name)
+    name = re.sub(r'[^a-z0-9 ]', ' ', name)
+    name = re.sub(r'\s+', ' ', name)
+    return name.strip()
 
-def extract_teams(match):
-    if " vs " not in match:
+def extract_teams(match_str):
+    if " vs " not in match_str:
         return None, None
-    t1, t2 = match.split(" vs ", 1)
-    return normalize(t1), normalize(t2)
+    a, b = match_str.split(" vs ", 1)
+    return clean(a), clean(b)
 
-# ------------------- MATCHING -------------------
+# ---------- MATCHING (улучшенный) ----------
 def match_events(fb_match, pm_match):
     fb1, fb2 = extract_teams(fb_match)
     pm1, pm2 = extract_teams(pm_match)
-
     if not fb1 or not pm1:
         return False
 
-    def score(a, b):
-        return len(set(a.split()) & set(b.split()))
+    def score(x, y):
+        # количество общих слов + бонус за точное совпадение
+        wx = set(x.split())
+        wy = set(y.split())
+        base = len(wx & wy)
+        if x == y:
+            base += 10
+        return base
 
     direct = score(fb1, pm1) + score(fb2, pm2)
-    cross = score(fb1, pm2) + score(fb2, pm1)
+    cross  = score(fb1, pm2) + score(fb2, pm1)
 
-    return max(direct, cross) >= 2
+    # Порог: минимум 2 общих слова (или одно, но точное совпадение)
+    return direct >= 2 or cross >= 2
 
-# ------------------- MAIN -------------------
+# ---------- MAIN ----------
 def find_arbs():
     global sent
-
     log("Проверка вилок...")
 
     fonbet = get_fonbet_esports_odds()
-    poly = get_polymarket_esports_odds()
+    poly   = get_polymarket_esports_odds()
+    log(f"Fonbet: {len(fonbet)} матчей, Polymarket: {len(poly)} матчей")
 
-    log(f"Fonbet: {len(fonbet)}, Polymarket: {len(poly)}")
-
-    MAX_PER_RUN = 5
     sent_now = 0
 
     for fb in fonbet:
-        best_profit = 0
-        best_data = None
+        best_profit = -100
+        best_kf = best_kp = None
 
         for pm in poly:
             if not match_events(fb['match'], pm['match']):
@@ -96,59 +99,53 @@ def find_arbs():
             kf1, kf2 = fb['odds']
             kp1, kp2 = pm['odds']
 
-            # 🔥 фильтр мусора
-            if min(kf1, kf2, kp1, kp2) < 1.3:
-                continue
-            if max(kf1, kf2, kp1, kp2) > 4.5:
+            # Фильтр мусора
+            if min(kf1, kf2, kp1, kp2) < 1.3 or max(kf1, kf2, kp1, kp2) > 4.5:
                 continue
 
-            p1 = calculate_profit(kf1, kp2)
-            p2 = calculate_profit(kf2, kp1)
-
+            # Две возможные вилки
+            p1 = profit(kf1, kp2)
             if p1 > best_profit:
                 best_profit = p1
-                best_data = (kf1, kp2)
+                best_kf, best_kp = kf1, kp2
 
+            p2 = profit(kf2, kp1)
             if p2 > best_profit:
                 best_profit = p2
-                best_data = (kf2, kp1)
+                best_kf, best_kp = kf2, kp1
 
-        match_key = normalize(fb['match'])
+        if best_profit <= 3:
+            continue
 
-        # 🔥 анти-спам + обновление только если профит вырос
-        if best_profit > 3:
-            if match_key in sent and sent[match_key] >= best_profit:
-                continue
+        match_key = clean(fb['match'])
+        if match_key in sent and sent[match_key] >= best_profit:
+            continue
 
-            kf, kp = best_data
-            s1, s2, net = calculate_stakes(kf, kp, TOTAL_BUDGET)
+        kf, kp = best_kf, best_kp
+        s1, s2, net = stakes(kf, kp, TOTAL_BUDGET)
 
-            msg = (
-                f"🔥 ВИЛКА\n"
-                f"{fb['match']}\n\n"
-                f"📌 Fonbet: {kf}\n"
-                f"📌 Polymarket: {kp:.2f}\n\n"
-                f"💰 Ставки: {s1} / {s2}\n"
-                f"📈 Профит: {best_profit:.2f}% | +{net} RUB"
-            )
+        msg = (
+            f"🔥 ВИЛКА\n"
+            f"{fb['match']}\n\n"
+            f"📌 Fonbet: {kf}\n"
+            f"📌 Polymarket: {kp}\n\n"
+            f"💰 Ставки: {s1} / {s2}\n"
+            f"📈 Профит: {best_profit:.2f}% | +{net} RUB"
+        )
 
-            log(f"{fb['match']} | {best_profit:.2f}%", "ARB")
+        log(f"{fb['match']} | {best_profit:.2f}%", "ARB")
+        send_message(msg)
+        sent[match_key] = best_profit
+        sent_now += 1
+        if sent_now >= MAX_PER_RUN:
+            return
 
-            send_message(msg)
-            sent[match_key] = best_profit
-
-            sent_now += 1
-            if sent_now >= MAX_PER_RUN:
-                return
-
-# ------------------- LOOP -------------------
+# ---------- LOOP ----------
 if __name__ == "__main__":
     log("Бот запущен", "START")
-
     while True:
         try:
             find_arbs()
         except Exception as e:
             log(f"Ошибка: {e}", "ERROR")
-
         time.sleep(60)
