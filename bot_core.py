@@ -2,6 +2,8 @@ import time
 import requests
 import traceback
 import urllib3
+import re
+
 from fonbet_esports_parser_v2 import get_fonbet_esports_odds
 from polymarket_esports_parser_v2 import get_polymarket_esports_odds
 
@@ -43,43 +45,34 @@ def calculate_stakes(k1, k2, budget):
     profit = s1 * k1 - budget
     return round(s1, 2), round(s2, 2), round(profit, 2)
 
-# ------------------- ТОЧНЫЙ МАТЧИНГ -------------------
-def extract_teams_from_match(match_name):
-    if " vs " in match_name:
-        parts = match_name.split(" vs ", 1)
-        if len(parts) == 2:
-            return parts[0].strip().lower(), parts[1].strip().lower()
-    return None, None
+# ------------------- УМНЫЙ МАТЧИНГ -------------------
+def normalize(text):
+    text = text.lower()
+    text = re.sub(r'\([^)]*\)', '', text)
+    text = re.sub(r'[^a-z0-9 ]', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
 
-def normalize_team_name(team_name):
-    import re
-    team_name = re.sub(r'\([^)]*\)', '', team_name)
-    team_name = re.sub(r'\s+', ' ', team_name)
-    return team_name.strip().lower()
+def extract_teams(match):
+    if " vs " not in match:
+        return None, None
+    t1, t2 = match.split(" vs ", 1)
+    return normalize(t1), normalize(t2)
 
 def match_events(fb_match, pm_match):
-    fb_team1, fb_team2 = extract_teams_from_match(fb_match)
-    pm_team1, pm_team2 = extract_teams_from_match(pm_match)
+    fb1, fb2 = extract_teams(fb_match)
+    pm1, pm2 = extract_teams(pm_match)
 
-    if not fb_team1 or not pm_team1:
+    if not fb1 or not pm1:
         return False
 
-    fb_team1 = normalize_team_name(fb_team1)
-    fb_team2 = normalize_team_name(fb_team2)
-    pm_team1 = normalize_team_name(pm_team1)
-    pm_team2 = normalize_team_name(pm_team2)
+    def score(a, b):
+        return len(set(a.split()) & set(b.split()))
 
-    def similar(a, b):
-        # 🔥 минимум 3 символа пересечения
-        return a in b or b in a or (
-            len(set(a.split()) & set(b.split())) >= 1
-        )
+    direct = score(fb1, pm1) + score(fb2, pm2)
+    cross = score(fb1, pm2) + score(fb2, pm1)
 
-    return (
-        similar(fb_team1, pm_team1) and similar(fb_team2, pm_team2)
-    ) or (
-        similar(fb_team1, pm_team2) and similar(fb_team2, pm_team1)
-    )
+    return max(direct, cross) >= 1
 
 # ------------------- ПОИСК ВИЛОК -------------------
 def find_arbs():
@@ -92,53 +85,54 @@ def find_arbs():
 
     log(f"Fonbet: {len(fonbet_data)}, Polymarket: {len(poly_data)}", "INFO")
 
-    candidates = []
-
     for fb in fonbet_data:
-        team1, team2 = extract_teams_from_match(fb['match'])
-        
         for pm in poly_data:
+
             if not match_events(fb['match'], pm['match']):
                 continue
-            
-            profit1 = calculate_profit(fb['odds'][0], pm['odds'][1])
-            
-            if profit1 > 0.5:
-                s1, s2, net = calculate_stakes(fb['odds'][0], pm['odds'][1], TOTAL_BUDGET)
-                key = f"{fb['match']}_FONBET_{team1}_POLY_{team2}"
-                
-                if key not in sent:
+
+            combos = [
+                (fb['odds'][0], pm['odds'][0], "F1-P1"),
+                (fb['odds'][1], pm['odds'][1], "F2-P2"),
+                (fb['odds'][0], pm['odds'][1], "F1-P2"),
+                (fb['odds'][1], pm['odds'][0], "F2-P1"),
+            ]
+
+            for kf, kp, tag in combos:
+                profit = calculate_profit(kf, kp)
+
+                if profit > 0.5:
+                    s1, s2, net = calculate_stakes(kf, kp, TOTAL_BUDGET)
+
+                    key = f"{fb['match']}|{tag}"
+
+                    if key in sent:
+                        continue
+
                     msg = (
                         f"🔥 ВИЛКА\n"
                         f"{fb['match']}\n\n"
-                        f"📌 Fonbet ({team1}): {fb['odds'][0]}\n"
-                        f"📌 Polymarket ({team2}): {pm['odds'][1]:.2f}\n\n"
+                        f"📌 Fonbet: {kf}\n"
+                        f"📌 Polymarket: {kp}\n\n"
                         f"💰 Ставки: {s1} / {s2} RUB\n"
-                        f"📈 Профит: {profit1:.2f}% | +{net} RUB"
+                        f"📈 Профит: {profit:.2f}% | +{net} RUB"
                     )
-                    candidates.append((key, profit1, msg))
-                    log(f"{fb['match']} | {team1}(F)+{team2}(P) | {profit1:.2f}%", "ARB")
-            
-            profit2 = calculate_profit(fb['odds'][1], pm['odds'][0])
-            
-            if profit2 > 0.5:
-                s1, s2, net = calculate_stakes(fb['odds'][1], pm['odds'][0], TOTAL_BUDGET)
-                key = f"{fb['match']}_FONBET_{team2}_POLY_{team1}"
-                
-                if key not in sent:
-                    msg = (
-                        f"🔥 ВИЛКА\n"
-                        f"{fb['match']}\n\n"
-                        f"📌 Fonbet ({team2}): {fb['odds'][1]}\n"
-                        f"📌 Polymarket ({team1}): {pm['odds'][0]:.2f}\n\n"
-                        f"💰 Ставки: {s1} / {s2} RUB\n"
-                        f"📈 Профит: {profit2:.2f}% | +{net} RUB"
-                    )
-                    candidates.append((key, profit2, msg))
-                    log(f"{fb['match']} | {team2}(F)+{team1}(P) | {profit2:.2f}%", "ARB")
-    
-    for key, profit, msg in candidates:
-        if key not in sent:
-            send_message(msg)
-            sent.add(key)
-            time.sleep(0.5)
+
+                    log(f"{fb['match']} | {tag} | {profit:.2f}%", "ARB")
+                    send_message(msg)
+
+                    sent.add(key)
+                    time.sleep(0.5)
+
+# ------------------- ГЛАВНЫЙ ЦИКЛ -------------------
+if __name__ == "__main__":
+    log("Бот запущен", "START")
+
+    while True:
+        try:
+            find_arbs()
+        except Exception as e:
+            log(f"Ошибка: {e}", "ERROR")
+            traceback.print_exc()
+
+        time.sleep(60)
