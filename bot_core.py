@@ -60,17 +60,26 @@ def normalize_team_name(team_name):
 def match_events(fb_match, pm_match):
     fb_team1, fb_team2 = extract_teams_from_match(fb_match)
     pm_team1, pm_team2 = extract_teams_from_match(pm_match)
-    
+
     if not fb_team1 or not pm_team1:
         return False
-    
+
     fb_team1 = normalize_team_name(fb_team1)
     fb_team2 = normalize_team_name(fb_team2)
     pm_team1 = normalize_team_name(pm_team1)
     pm_team2 = normalize_team_name(pm_team2)
-    
-    return (fb_team1 == pm_team1 and fb_team2 == pm_team2) or \
-           (fb_team1 == pm_team2 and fb_team2 == pm_team1)
+
+    def similar(a, b):
+        # 🔥 минимум 3 символа пересечения
+        return a in b or b in a or (
+            len(set(a.split()) & set(b.split())) >= 1
+        )
+
+    return (
+        similar(fb_team1, pm_team1) and similar(fb_team2, pm_team2)
+    ) or (
+        similar(fb_team1, pm_team2) and similar(fb_team2, pm_team1)
+    )
 
 # ------------------- ПОИСК ВИЛОК -------------------
 def find_arbs():
