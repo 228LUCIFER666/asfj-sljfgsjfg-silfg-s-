@@ -11,13 +11,12 @@ ESPORT_IDS = {
     141154, 141188, 141206, 141303, 141348, 141354, 141367
 }
 
-# Только проверенные пары основного исхода (3262/3263 убраны для LoL)
 WIN_FACTOR_PAIRS = [
-    (910, 912),   # CS:GO, частично LoL
-    (921, 923),   # Dota 2, LoL основной исход
-    (930, 931),   # LoL (Team WE vs Bilibili и др.)
-    (1696, 1697), # LoL
-    (1736, 1737), # доп. вариант
+    (910, 912),
+    (921, 923),
+    (930, 931),
+    (1696, 1697),
+    (1736, 1737),
 ]
 
 LOL_MARKERS = [
@@ -102,7 +101,6 @@ def get_fonbet_esports_odds():
                         elif fid == id2 and isinstance(item.get("v"), (int, float)):
                             v2 = item["v"]
                         if v1 is not None and v2 is not None: break
-                    # Снижена нижняя граница до 1.10
                     if v1 and v2 and 1.1 < v1 < 5 and 1.1 < v2 < 5:
                         odds_by_event[event_id] = [v1, v2]
                         break
