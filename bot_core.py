@@ -61,11 +61,12 @@ def stakes(k1, k2, budget):
     net = s1 * k1 - budget
     return round(s1, 2), round(s2, 2), round(net, 2)
 
-# ---------- NORMALIZE ----------
+# ---------- NORMALIZE (НЕ удаляем academy/challengers/youth!) ----------
 def clean(text):
     text = text.lower()
-    text = re.sub(r'\([^)]*\)', '', text)
-    text = re.sub(r'\b(academy|youth|team|esports|gaming|club)\b', '', text)
+    text = re.sub(r'\([^)]*\)', '', text)                 # удаляем скобки
+    # удаляем только самые общие слова, которые не различают команды
+    text = re.sub(r'\b(team|esports|gaming|club)\b', '', text)
     text = re.sub(r'[^a-z0-9 ]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
@@ -77,51 +78,48 @@ def extract_teams(match_str):
     return clean(a), clean(b)
 
 def team_key(name):
-    words = name.split()
-    return ' '.join(w[:2] if len(w) > 2 else w for w in words)
+    """Возвращает список слов (полностью), а не только первые 2 буквы"""
+    return name.split()
 
-# ---------- MATCHING (возвращает словарь соответствия команд) ----------
+# ---------- MATCHING (ужесточён) ----------
 def match_events(fb_match, pm_match):
-    """
-    Возвращает словарь вида:
-    {'fb_team1': 'название для Fonbet', 'fb_team2': 'название для Fonbet',
-     'pm_team1': 'соответствующая в Polymarket', 'pm_team2': 'соответствующая'}
-    или None, если матчи не совпали.
-    """
     fb1_raw, fb2_raw = extract_teams(fb_match)
     pm1_raw, pm2_raw = extract_teams(pm_match)
     if not fb1_raw or not pm1_raw:
         return None
 
-    # применяем синонимы
     fb1 = apply_synonyms(fb1_raw)
     fb2 = apply_synonyms(fb2_raw)
     pm1 = apply_synonyms(pm1_raw)
     pm2 = apply_synonyms(pm2_raw)
 
-    # отбрасываем мусор
     bad = {'tbd', 'tba', 'over', 'under', 'yes', 'no'}
     if any(t in bad for t in [fb1, fb2, pm1, pm2]):
         return None
 
-    kfb1, kfb2 = team_key(fb1), team_key(fb2)
-    kpm1, kpm2 = team_key(pm1), team_key(pm2)
+    # Получаем списки слов
+    words_fb1 = set(team_key(fb1))
+    words_fb2 = set(team_key(fb2))
+    words_pm1 = set(team_key(pm1))
+    words_pm2 = set(team_key(pm2))
 
-    def similar(a, b):
-        return a == b or (a and b and (a in b or b in a))
+    def teams_match(w1, w2):
+        # Должно совпасть хотя бы одно полное слово (не подстрока)
+        return not w1.isdisjoint(w2)
 
-    # Прямое соответствие
-    if similar(kfb1, kpm1) and similar(kfb2, kpm2):
+    direct = teams_match(words_fb1, words_pm1) and teams_match(words_fb2, words_pm2)
+    cross  = teams_match(words_fb1, words_pm2) and teams_match(words_fb2, words_pm1)
+
+    if direct:
         return {
             'fb_team1': fb1_raw, 'fb_team2': fb2_raw,
             'pm_team1': pm1_raw, 'pm_team2': pm2_raw,
-            'mapping': 'direct'   # Fonbet team1 = Polymarket team1
+            'mapping': 'direct'
         }
-    # Перекрёстное соответствие
-    if similar(kfb1, kpm2) and similar(kfb2, kpm1):
+    if cross:
         return {
             'fb_team1': fb1_raw, 'fb_team2': fb2_raw,
-            'pm_team1': pm2_raw, 'pm_team2': pm1_raw,  # перевернули
+            'pm_team1': pm2_raw, 'pm_team2': pm1_raw,  # перекрёстно
             'mapping': 'cross'
         }
     return None
@@ -155,12 +153,10 @@ def find_arbs():
             kf1, kf2 = fb['odds']
             kp1, kp2 = pm['odds']
 
-            # коэффициенты основного исхода
             if min(kf1, kf2, kp1, kp2) < 1.15 or max(kf1, kf2, kp1, kp2) > 5.0:
                 continue
 
             if mapping['mapping'] == 'direct':
-                # Fonbet team1 = Polymarket team1
                 p1 = profit(kf1, kp2)
                 if p1 > best_profit:
                     best_profit = p1
@@ -175,7 +171,6 @@ def find_arbs():
                     best_team_fb = mapping['fb_team2']
                     best_team_pm = mapping['pm_team1']
             else:  # cross
-                # Fonbet team1 = Polymarket team2
                 p1 = profit(kf1, kp1)
                 if p1 > best_profit:
                     best_profit = p1
@@ -190,7 +185,7 @@ def find_arbs():
                     best_team_fb = mapping['fb_team2']
                     best_team_pm = mapping['pm_team2']
 
-        if best_profit <= 1:   # порог 1%
+        if best_profit <= 1:
             continue
 
         match_key = clean(fb['match'])
