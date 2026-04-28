@@ -128,8 +128,9 @@ def find_arbs():
             continue
         kf, kp = best_kf, best_kp
         s1, s2, net = stakes(kf, kp, TOTAL_BUDGET)
+        league = fb.get('league', 'Esports')   # <-- берём лигу
         msg = (
-            f"🔥 ВИЛКА\n"
+            f"🔥 ВИЛКА ({league})\n"           # <-- добавили дисциплину
             f"{fb['match']}\n\n"
             f"📌 Fonbet: {kf}\n"
             f"📌 Polymarket: {kp}\n\n"
