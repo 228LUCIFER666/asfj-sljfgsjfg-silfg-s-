@@ -2,22 +2,31 @@ import requests
 
 URL = "https://line-lb54-w.bk6bba-resources.com/ma/events/list"
 
-# Все найденные киберспортивные sportId (47 штук)
+# Актуальные киберспортивные sportId (61 штука)
 ESPORT_IDS = {
-    78691, 82460, 86077, 87433, 99029, 104719, 105055, 108404, 108900,
-    115130, 115232, 118783, 119178, 119473, 120197, 121042, 124218,
-    128301, 133266, 134976, 135675, 136923, 136924, 136925, 137074,
-    137584, 137756, 137757, 138347, 138393, 139083, 139876, 140053,
-    140368, 140428, 140454, 140677, 140828, 140830, 140837, 141081,
-    141154, 141188, 141206, 141303, 141354, 141367
+    78562, 78691, 82460, 86077, 87433, 99029, 99302, 99432, 104719, 105055,
+    108404, 108900, 115130, 115232, 118783, 119178, 119473, 120197, 121042,
+    124218, 128301, 133266, 134976, 135675, 136923, 136924, 136925, 137074,
+    137533, 137584, 137756, 137757, 138347, 138393, 138512, 139083, 139876,
+    140053, 140368, 140428, 140454, 140677, 140828, 140830, 140837, 141081,
+    141154, 141188, 141206, 141303, 141348, 141354, 141367
 }
 
-# Маркеры для определения дисциплины
+# Пары factorId для основного исхода (П1, П2)
+WIN_FACTOR_PAIRS = [
+    (910, 912),   # CS:GO, частично LoL
+    (921, 923),   # Dota 2
+    (3262, 3263), # Dota 2 (альтернативный)
+    (1696, 1697), # вероятно LoL/CS:GO
+]
+
+# Маркеры дисциплин (оставляем без изменений)
 LOL_MARKERS = [
     "invictus", "anyone's legend", "weibo", "top esports", "ninjas in pyjamas",
     "jd gaming", "team we", "bilibili", "thundertalk", "lgd", "ultra prime",
     "edward gaming", "lng", "nongshim", "t1", "kt rolster", "hanwha",
-    "gen.g", "dplus", "fearx", "dn soopers", "brion", "krx", "challengers"
+    "gen.g", "dplus", "fearx", "dn soopers", "brion", "krx", "challengers",
+    "flyquest", "team liquid", "titan esports club"
 ]
 CSGO_MARKERS = [
     "vitality", "fut esports", "astralis", "g2 esports", "natus vincere",
@@ -28,14 +37,27 @@ CSGO_MARKERS = [
     "giantx", "ucam", "fnatic", "shifters", "galions", "solary",
     "sk gaming", "pcific", "karmine corp", "bbl", "eternal fire",
     "miami heretics", "vancouver surge", "toronto koi", "optic texas",
-    "g2 minnesota", "falcons force", "sharks", "havu gaming"
+    "g2 minnesota", "falcons force", "sharks", "havu gaming",
+    "navi junior", "algo", "aeterna", "yawara", "alzon",
+    "cloud9", "dignitas", "exile", "onion team", "virtus.pro",
+    "team yandex", "mvk", "ground zero gaming", "big", "teamorangegaming",
+    "anonymo esports", "docisk", "once upon a team", "dynasty",
+    "pcific", "su esports", "vicigaming", "cloud dawning",
+    "ursa", "havu gaming", "prestige esport", "prestige",
+    "kru esports", "100 thieves", "xlg", "titan esports",
+    "mouz", "spirit", "g2 ares"
 ]
 DOTA_MARKERS = [
     "lynx", "south america rejects", "power rangers", "l1ga team",
-    "nigma galaxy", "1w team", "1win"
+    "nigma galaxy", "1w team", "1win", "xtreme gaming", "roar gaming",
+    "yakult brothers", "mideng dreamer", "team refuser", "team resilience",
+    "tundra esports"
 ]
 VALORANT_MARKERS = [
-    "sentinels", "100 thieves", "loud", "cloud9", "drx", "paper rex"
+    "sentinels", "100 thieves", "loud", "cloud9", "drx", "paper rex",
+    "leviatan", "paiN gaming", "gen.g esports", "team secret",
+    "nongshim redforce", "global esports", "t1", "full sense",
+    "sygaming", "edward gaming"
 ]
 
 def classify_league(team1, team2, competition):
@@ -71,7 +93,7 @@ def get_fonbet_esports_odds():
         print(f"events: {len(events)}")
         print(f"customFactors: {len(custom_factors)}")
 
-        # eventId → коэффициенты
+        # eventId → коэффициенты (основной исход)
         odds_by_event = {}
         for block in custom_factors:
             try:
@@ -81,22 +103,23 @@ def get_fonbet_esports_odds():
                 factors = block.get("factors", [])
                 if not factors:
                     continue
-                
-                # 🔥 ВАЖНО: берём только основной исход (factorId = 1, 919, 920)
-                first_factor = factors[0]
-                fid = first_factor.get("f") or first_factor.get("factorId")
-                if fid not in (1, 919, 920):
-                    continue
 
-                odds = []
-                for item in factors:
-                    val = item.get("v")
-                    if isinstance(val, (int, float)) and 1.2 < val < 5:
-                        odds.append(val)
-                        if len(odds) == 2:
+                # Проверяем все известные пары factorId для основного исхода
+                for pid1, pid2 in WIN_FACTOR_PAIRS:
+                    val1 = None
+                    val2 = None
+                    for item in factors:
+                        fid = item.get("f") or item.get("factorId")
+                        v = item.get("v")
+                        if fid == pid1 and isinstance(v, (int, float)):
+                            val1 = v
+                        elif fid == pid2 and isinstance(v, (int, float)):
+                            val2 = v
+                        if val1 is not None and val2 is not None:
                             break
-                if len(odds) == 2:
-                    odds_by_event[event_id] = odds
+                    if val1 and val2 and 1.2 < val1 < 5 and 1.2 < val2 < 5:
+                        odds_by_event[event_id] = [val1, val2]
+                        break  # нашли нужную пару, другие не проверяем
             except:
                 continue
 
