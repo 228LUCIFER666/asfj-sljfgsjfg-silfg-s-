@@ -16,10 +16,8 @@ def get_polymarket_esports_odds():
             cs_events = find_events_recursive(resp.json())
             print(f"CS:GO загружено: {len(cs_events)} событий")
             matches.extend(parse_cs_style(cs_events, "CS:GO"))
-        else:
-            print(f"CS:GO ошибка {resp.status_code}")
-    except Exception as e:
-        print(f"CS:GO ошибка: {e}")
+        else: print(f"CS:GO ошибка {resp.status_code}")
+    except Exception as e: print(f"CS:GO ошибка: {e}")
 
     # ---------- LoL ----------
     lol_url = "https://gamma-api.polymarket.com/events?series_id=10311&closed=false&limit=100"
@@ -30,10 +28,8 @@ def get_polymarket_esports_odds():
             lol_events = [ev for ev in raw if 'markets' in ev and not ev.get('closed')]
             print(f"LoL загружено: {len(lol_events)} событий")
             matches.extend(parse_gamma_events(lol_events, "LoL"))
-        else:
-            print(f"LoL ошибка {resp.status_code}")
-    except Exception as e:
-        print(f"LoL ошибка: {e}")
+        else: print(f"LoL ошибка {resp.status_code}")
+    except Exception as e: print(f"LoL ошибка: {e}")
 
     # ---------- Dota 2 ----------
     dota_url = "https://gamma-api.polymarket.com/events?tag_id=102366&closed=false&limit=100"
@@ -44,14 +40,11 @@ def get_polymarket_esports_odds():
             dota_events = [ev for ev in raw if 'markets' in ev and not ev.get('closed')]
             print(f"Dota 2 загружено: {len(dota_events)} событий")
             matches.extend(parse_gamma_events(dota_events, "Dota 2"))
-        else:
-            print(f"Dota 2 ошибка {resp.status_code}")
-    except Exception as e:
-        print(f"Dota 2 ошибка: {e}")
+        else: print(f"Dota 2 ошибка {resp.status_code}")
+    except Exception as e: print(f"Dota 2 ошибка: {e}")
 
     print(f"\nВсего матчей собрано: {len(matches)}")
     return matches
-
 
 def find_events_recursive(obj):
     results = []
@@ -65,7 +58,6 @@ def find_events_recursive(obj):
             results.extend(find_events_recursive(item))
     return results
 
-
 def parse_cs_style(events, league_name):
     matches = []
     for ev in events:
@@ -78,40 +70,40 @@ def parse_cs_style(events, league_name):
                 outcomes = m.get('outcomes', [])
                 prices = m.get('outcomePrices', [])
                 if len(outcomes) < 2 or len(prices) < 2: continue
-                if isinstance(outcomes[0], str):
-                    t1, t2 = outcomes[0], outcomes[1]
-                elif isinstance(outcomes[0], dict):
-                    t1 = outcomes[0].get('title', '')
-                    t2 = outcomes[1].get('title', '')
+                if isinstance(outcomes[0], str): t1, t2 = outcomes[0], outcomes[1]
+                elif isinstance(outcomes[0], dict): t1 = outcomes[0].get('title',''); t2 = outcomes[1].get('title','')
                 else: continue
                 t1, t2 = t1.strip(), t2.strip()
                 if any(x in t1.lower() or x in t2.lower() for x in ["yes","no","over","under","odd","even"]): continue
                 if not (t1.lower() in title or t2.lower() in title): continue
                 p1, p2 = float(prices[0]), float(prices[1])
                 if p1 <= 0.01 or p2 <= 0.01: continue
-                k1, k2 = round(1/p1, 2), round(1/p2, 2)
+                k1, k2 = round(1/p1,2), round(1/p2,2)
                 match_name = f"{t1} vs {t2}"
-                matches.append({'match': match_name, 'odds': [k1, k2], 'league': league_name})
+                matches.append({'match': match_name, 'odds': [k1,k2], 'league': league_name})
                 break
         except: continue
     return matches
 
-
 def parse_gamma_events(events, league_name):
-    """Парсинг Gamma API (LoL, Dota 2) — используется ТОЛЬКО основной рынок (moneyline)"""
     matches = []
     for ev in events:
         try:
             markets = ev.get('markets', [])
             if not markets: continue
-
             winner_market = None
+            # Ищем Match Winner
             for m in markets:
-                if m.get("sportsMarketType") == "moneyline":
+                if m.get("groupItemTitle") == "Match Winner":
                     winner_market = m
                     break
-            if winner_market is None:
-                continue
+            # Если нет — берем moneyline без gameId (чтобы исключить карты)
+            if not winner_market:
+                for m in markets:
+                    if m.get("sportsMarketType") == "moneyline" and not m.get("gameId"):
+                        winner_market = m
+                        break
+            if not winner_market: continue
 
             raw_out = winner_market.get('outcomes', '[]')
             raw_pr = winner_market.get('outcomePrices', '[]')
@@ -119,22 +111,16 @@ def parse_gamma_events(events, league_name):
                 outcomes = json.loads(raw_out) if isinstance(raw_out, str) else raw_out
                 prices = json.loads(raw_pr) if isinstance(raw_pr, str) else raw_pr
             except: continue
-
             if len(outcomes) < 2 or len(prices) < 2: continue
             t1, t2 = outcomes[0].strip(), outcomes[1].strip()
-
-            if any(x in t1.lower() or x in t2.lower() for x in ["yes","no","over","under"]):
-                continue
-
+            if any(x in t1.lower() or x in t2.lower() for x in ["yes","no","over","under"]): continue
             p1, p2 = float(prices[0]), float(prices[1])
             if p1 <= 0.01 or p2 <= 0.01: continue
-            k1, k2 = round(1/p1, 2), round(1/p2, 2)
-
+            k1, k2 = round(1/p1,2), round(1/p2,2)
             match_name = f"{t1} vs {t2}"
-            matches.append({'match': match_name, 'odds': [k1, k2], 'league': league_name})
+            matches.append({'match': match_name, 'odds': [k1,k2], 'league': league_name})
         except: continue
     return matches
-
 
 if __name__ == "__main__":
     res = get_polymarket_esports_odds()

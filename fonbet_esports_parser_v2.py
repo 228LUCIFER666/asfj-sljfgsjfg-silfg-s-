@@ -18,9 +18,9 @@ WIN_FACTOR_PAIRS = [
     (921, 923),   # Dota 2
     (3262, 3263), # Dota 2 (альтернативный)
     (1696, 1697), # вероятно LoL/CS:GO
+    (1736, 1737), # ещё один вариант
 ]
 
-# Маркеры дисциплин (оставляем без изменений)
 LOL_MARKERS = [
     "invictus", "anyone's legend", "weibo", "top esports", "ninjas in pyjamas",
     "jd gaming", "team we", "bilibili", "thundertalk", "lgd", "ultra prime",
@@ -39,13 +39,13 @@ CSGO_MARKERS = [
     "miami heretics", "vancouver surge", "toronto koi", "optic texas",
     "g2 minnesota", "falcons force", "sharks", "havu gaming",
     "navi junior", "algo", "aeterna", "yawara", "alzon",
-    "cloud9", "dignitas", "exile", "onion team", "virtus.pro",
-    "team yandex", "mvk", "ground zero gaming", "big", "teamorangegaming",
+    "cloud9", "dignitas", "exile esports", "onion team", "virtus.pro",
+    "team yandex", "mvk esports", "ground zero gaming", "big", "teamorangegaming",
     "anonymo esports", "docisk", "once upon a team", "dynasty",
     "pcific", "su esports", "vicigaming", "cloud dawning",
     "ursa", "havu gaming", "prestige esport", "prestige",
-    "kru esports", "100 thieves", "xlg", "titan esports",
-    "mouz", "spirit", "g2 ares"
+    "kru esports", "xlg", "titan esports", "mouz", "spirit",
+    "g2 ares", "lyon", "sentinels"
 ]
 DOTA_MARKERS = [
     "lynx", "south america rejects", "power rangers", "l1ga team",
@@ -74,100 +74,70 @@ def classify_league(team1, team2, competition):
 
 def get_fonbet_esports_odds():
     print("Fonbet API: запуск...")
-
     try:
         r = requests.get(URL, params={
-            "lang": "ru",
-            "version": "0",
-            "scopeMarket": "1600"
+            "lang": "ru", "version": "0", "scopeMarket": "1600"
         }, timeout=10)
-
         if r.status_code != 200:
             print("Ошибка запроса:", r.status_code)
             return []
-
         data = r.json()
         events = data.get("events", [])
         custom_factors = data.get("customFactors", [])
-
         print(f"events: {len(events)}")
         print(f"customFactors: {len(custom_factors)}")
 
-        # eventId → коэффициенты (основной исход)
         odds_by_event = {}
         for block in custom_factors:
             try:
                 event_id = block.get("e") or block.get("eventId")
-                if not event_id:
-                    continue
+                if not event_id: continue
                 factors = block.get("factors", [])
-                if not factors:
-                    continue
-
-                # Проверяем все известные пары factorId для основного исхода
-                for pid1, pid2 in WIN_FACTOR_PAIRS:
-                    val1 = None
-                    val2 = None
+                if not factors: continue
+                # ищем любую пару из WIN_FACTOR_PAIRS
+                for (id1, id2) in WIN_FACTOR_PAIRS:
+                    v1 = v2 = None
                     for item in factors:
                         fid = item.get("f") or item.get("factorId")
-                        v = item.get("v")
-                        if fid == pid1 and isinstance(v, (int, float)):
-                            val1 = v
-                        elif fid == pid2 and isinstance(v, (int, float)):
-                            val2 = v
-                        if val1 is not None and val2 is not None:
-                            break
-                    if val1 and val2 and 1.2 < val1 < 5 and 1.2 < val2 < 5:
-                        odds_by_event[event_id] = [val1, val2]
-                        break  # нашли нужную пару, другие не проверяем
-            except:
-                continue
+                        if fid == id1 and isinstance(item.get("v"), (int, float)):
+                            v1 = item["v"]
+                        elif fid == id2 and isinstance(item.get("v"), (int, float)):
+                            v2 = item["v"]
+                        if v1 is not None and v2 is not None: break
+                    if v1 and v2 and 1.2 < v1 < 5 and 1.2 < v2 < 5:
+                        odds_by_event[event_id] = [v1, v2]
+                        break
+            except: continue
 
         print(f"odds_by_event: {len(odds_by_event)}")
-
         results = []
         for ev in events:
             try:
                 event_id = ev.get("id")
-                if event_id not in odds_by_event:
-                    continue
-
+                if event_id not in odds_by_event: continue
                 team1 = ev.get("team1")
                 team2 = ev.get("team2")
-                if not team1 or not team2:
-                    continue
-
+                if not team1 or not team2: continue
                 sport_id = ev.get("sportId")
-                if sport_id not in ESPORT_IDS:
-                    continue
-
+                if sport_id not in ESPORT_IDS: continue
                 competition = ev.get("competitionName") or ""
                 league = classify_league(team1, team2, competition)
-                if league is None:
-                    continue
-
+                if league is None: continue
                 odds = odds_by_event[event_id]
                 match = f"{team1} vs {team2}"
-                print(f"[{league}] {match} {odds}")
-                results.append({
-                    "match": match,
-                    "odds": odds,
-                    "league": league
-                })
-            except:
-                continue
+                results.append({"match": match, "odds": odds, "league": league})
+            except: continue
 
         print(f"\n✅ Найдено матчей: {len(results)}")
         return results
-
     except Exception as e:
         print("❌ Глобальная ошибка:", e)
         return []
 
-
 if __name__ == "__main__":
     res = get_fonbet_esports_odds()
     print("\nРезультат:")
-    for r in res:
+    for r in res[:10]:
         print(f"[{r['league']}] {r['match']} : {r['odds']}")
+    print("...")
     input("\nНажми Enter...")
