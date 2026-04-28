@@ -2,7 +2,7 @@ import requests
 
 URL = "https://line-lb54-w.bk6bba-resources.com/ma/events/list"
 
-# Актуальные киберспортивные sportId (61 штука)
+# Расширенный список sportId (добавлены 137757, 136924, 82460)
 ESPORT_IDS = {
     78562, 78691, 82460, 86077, 87433, 99029, 99302, 99432, 104719, 105055,
     108404, 108900, 115130, 115232, 118783, 119178, 119473, 120197, 121042,
@@ -12,13 +12,14 @@ ESPORT_IDS = {
     141154, 141188, 141206, 141303, 141348, 141354, 141367
 }
 
-# Пары factorId для основного исхода (П1, П2)
+# Пары factorId для основного исхода (добавлены 930/931)
 WIN_FACTOR_PAIRS = [
     (910, 912),   # CS:GO, частично LoL
-    (921, 923),   # Dota 2
-    (3262, 3263), # Dota 2 (альтернативный)
-    (1696, 1697), # вероятно LoL/CS:GO
-    (1736, 1737), # ещё один вариант
+    (921, 923),   # Dota 2, LoL основной исход
+    (930, 931),   # LoL (Team WE vs Bilibili и др.)
+    (3262, 3263), # Dota 2 / LoL
+    (1696, 1697), # LoL
+    (1736, 1737), # доп. вариант
 ]
 
 LOL_MARKERS = [
@@ -94,7 +95,6 @@ def get_fonbet_esports_odds():
                 if not event_id: continue
                 factors = block.get("factors", [])
                 if not factors: continue
-                # ищем любую пару из WIN_FACTOR_PAIRS
                 for (id1, id2) in WIN_FACTOR_PAIRS:
                     v1 = v2 = None
                     for item in factors:
