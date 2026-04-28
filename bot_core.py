@@ -61,11 +61,10 @@ def stakes(k1, k2, budget):
     net = s1 * k1 - budget
     return round(s1, 2), round(s2, 2), round(net, 2)
 
-# ---------- NORMALIZE (НЕ удаляем academy/challengers/youth!) ----------
+# ---------- NORMALIZE ----------
 def clean(text):
     text = text.lower()
     text = re.sub(r'\([^)]*\)', '', text)                 # удаляем скобки
-    # удаляем только самые общие слова, которые не различают команды
     text = re.sub(r'\b(team|esports|gaming|club)\b', '', text)
     text = re.sub(r'[^a-z0-9 ]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
@@ -77,11 +76,11 @@ def extract_teams(match_str):
     a, b = match_str.split(" vs ", 1)
     return clean(a), clean(b)
 
-def team_key(name):
-    """Возвращает список слов (полностью), а не только первые 2 буквы"""
-    return name.split()
+def team_words(name):
+    """Возвращает множество слов (не обрезанных до первых двух букв)"""
+    return set(name.split())
 
-# ---------- MATCHING (ужесточён) ----------
+# ---------- MATCHING (ужесточённый) ----------
 def match_events(fb_match, pm_match):
     fb1_raw, fb2_raw = extract_teams(fb_match)
     pm1_raw, pm2_raw = extract_teams(pm_match)
@@ -97,18 +96,17 @@ def match_events(fb_match, pm_match):
     if any(t in bad for t in [fb1, fb2, pm1, pm2]):
         return None
 
-    # Получаем списки слов
-    words_fb1 = set(team_key(fb1))
-    words_fb2 = set(team_key(fb2))
-    words_pm1 = set(team_key(pm1))
-    words_pm2 = set(team_key(pm2))
+    wfb1 = team_words(fb1)
+    wfb2 = team_words(fb2)
+    wpm1 = team_words(pm1)
+    wpm2 = team_words(pm2)
 
-    def teams_match(w1, w2):
-        # Должно совпасть хотя бы одно полное слово (не подстрока)
-        return not w1.isdisjoint(w2)
+    def teams_match(w1, w2, min_common=2):
+        """True, если количество общих слов >= min_common"""
+        return len(w1 & w2) >= min_common
 
-    direct = teams_match(words_fb1, words_pm1) and teams_match(words_fb2, words_pm2)
-    cross  = teams_match(words_fb1, words_pm2) and teams_match(words_fb2, words_pm1)
+    direct = teams_match(wfb1, wpm1) and teams_match(wfb2, wpm2)
+    cross  = teams_match(wfb1, wpm2) and teams_match(wfb2, wpm1)
 
     if direct:
         return {
@@ -119,7 +117,7 @@ def match_events(fb_match, pm_match):
     if cross:
         return {
             'fb_team1': fb1_raw, 'fb_team2': fb2_raw,
-            'pm_team1': pm2_raw, 'pm_team2': pm1_raw,  # перекрёстно
+            'pm_team1': pm2_raw, 'pm_team2': pm1_raw,
             'mapping': 'cross'
         }
     return None
