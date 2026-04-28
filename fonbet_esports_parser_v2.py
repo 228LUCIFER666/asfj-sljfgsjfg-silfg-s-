@@ -71,6 +71,7 @@ def get_fonbet_esports_odds():
         print(f"events: {len(events)}")
         print(f"customFactors: {len(custom_factors)}")
 
+        # eventId → коэффициенты
         odds_by_event = {}
         for block in custom_factors:
             try:
@@ -78,6 +79,15 @@ def get_fonbet_esports_odds():
                 if not event_id:
                     continue
                 factors = block.get("factors", [])
+                if not factors:
+                    continue
+                
+                # 🔥 ВАЖНО: берём только основной исход (factorId = 1, 919, 920)
+                first_factor = factors[0]
+                fid = first_factor.get("f") or first_factor.get("factorId")
+                if fid not in (1, 919, 920):
+                    continue
+
                 odds = []
                 for item in factors:
                     val = item.get("v")
@@ -115,8 +125,7 @@ def get_fonbet_esports_odds():
 
                 odds = odds_by_event[event_id]
                 match = f"{team1} vs {team2}"
-                # Для чистоты консоли можно убрать print, но оставим для лога
-                # print(f"[{league}] {match} {odds}")
+                print(f"[{league}] {match} {odds}")
                 results.append({
                     "match": match,
                     "odds": odds,
@@ -131,3 +140,11 @@ def get_fonbet_esports_odds():
     except Exception as e:
         print("❌ Глобальная ошибка:", e)
         return []
+
+
+if __name__ == "__main__":
+    res = get_fonbet_esports_odds()
+    print("\nРезультат:")
+    for r in res:
+        print(f"[{r['league']}] {r['match']} : {r['odds']}")
+    input("\nНажми Enter...")
