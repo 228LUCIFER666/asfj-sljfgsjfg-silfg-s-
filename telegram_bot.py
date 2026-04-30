@@ -11,25 +11,24 @@ from polymarket import get_polymarket_esports_odds
 
 # ------------------- КОНФИГ -------------------
 TOKEN = os.getenv("BOT_TOKEN", "8481745931:AAG_e4Dijnv_sFoYkXIe0ZFSZ34yeSnuoWs")
-CHAT_ID = os.getenv("USER_ID")  # если нужно отправлять конкретному пользователю
+CHAT_ID = os.getenv("USER_ID")
 
 # ------------------- ГЛОБАЛЬНЫЕ -------------------
 bot_instance = None
 loop = None
 user_chat_id = None
-TOTAL_BUDGET = 10000
+TOTAL_BUDGET = 1000          # ← начальный бюджет (руб.)
 monitoring_active = False
 
-# ------------------- ПОТОКОБЕЗОПАСНАЯ ОТПРАВКА -------------------
+# ------------------- БЕЗОПАСНАЯ ОТПРАВКА -------------------
 def safe_send(text):
-    """Отправка сообщения из любого потока."""
     if bot_instance and loop and user_chat_id:
         asyncio.run_coroutine_threadsafe(
             bot_instance.send_message(chat_id=user_chat_id, text=text),
             loop
         )
 
-# ------------------- ЛОГИКА ВИЛОК (исправленная) -------------------
+# ------------------- ЛОГИКА ВИЛОК -------------------
 def clean_name(name):
     if not name:
         return set()
@@ -54,6 +53,13 @@ def leagues_compatible(f_league, p_league):
             return True
     return False
 
+def extract_teams(match_str):
+    """Достаёт имена команд из строки вида 'Team A vs Team B'."""
+    if " vs " not in match_str.lower():
+        return None, None
+    parts = match_str.split(" vs ", 1)
+    return parts[0].strip(), parts[1].strip()
+
 def analyze():
     """Возвращает (matched_pairs, surebets, fon_count, poly_count)"""
     fon_matches = get_fonbet_esports_odds()
@@ -68,7 +74,9 @@ def analyze():
         f_raw = f['match'].lower()
         if " vs " not in f_raw:
             continue
-        f_t1, f_t2 = f_raw.split(" vs ")
+        f_t1, f_t2 = extract_teams(f['match'])
+        if not f_t1 or not f_t2:
+            continue
         f_t1_words = clean_name(f_t1)
         f_t2_words = clean_name(f_t2)
 
@@ -76,7 +84,9 @@ def analyze():
             p_raw = p['match'].lower()
             if " vs " not in p_raw:
                 continue
-            p_t1, p_t2 = p_raw.split(" vs ")
+            p_t1, p_t2 = extract_teams(p['match'])
+            if not p_t1 or not p_t2:
+                continue
             p_t1_words = clean_name(p_t1)
             p_t2_words = clean_name(p_t2)
 
@@ -88,7 +98,7 @@ def analyze():
                 continue
 
             direct = (f_t1_words & p_t1_words) and (f_t2_words & p_t2_words)
-            cross = (f_t1_words & p_t2_words) and (f_t2_words & p_t1_words)
+            cross  = (f_t1_words & p_t2_words) and (f_t2_words & p_t1_words)
 
             if direct or cross:
                 pair = {'f': f, 'p': p, 'order': 'direct' if direct else 'cross'}
@@ -97,49 +107,93 @@ def analyze():
                 k1_f, k2_f = f['odds']
                 k1_p, k2_p = p['odds']
 
+                # Определяем, какая комбинация даёт вилку
                 profit1 = 1/k1_f + 1/k2_p
                 profit2 = 1/k2_f + 1/k1_p
 
                 best = min(profit1, profit2)
                 if best < 1.0:
                     profit_percent = (1 - best) * 100
-                    type_bet = "П1(FON) + П2(POLY)" if best == profit1 else "П2(FON) + П1(POLY)"
+                    if best == profit1:
+                        # Ставим на f_t1 в FON и на p_t2 в POLY
+                        # Но при cross порядке p_t2 = f_t1 (названия совпадают)
+                        team_name_f = f_t1
+                        team_name_p = p_t2
+                        type_bet = "П1(FON) + П2(POLY)"
+                        stake_fon = k1_f
+                        stake_poly = k2_p
+                    else:
+                        # Ставим на f_t2 в FON и на p_t1 в POLY
+                        team_name_f = f_t2
+                        team_name_p = p_t1
+                        type_bet = "П2(FON) + П1(POLY)"
+                        stake_fon = k2_f
+                        stake_poly = k1_p
+
                     if pair['order'] == 'cross':
                         type_bet += " [обр.порядок]"
+
                     surebets.append({
                         'profit': profit_percent,
                         'f_match': f['match'],
                         'p_match': p['match'],
                         'f_odds': f['odds'],
                         'p_odds': p['odds'],
-                        'type': type_bet
+                        'type': type_bet,
+                        'team_fon': team_name_f,
+                        'team_poly': team_name_p,
+                        'stake_fon': stake_fon,
+                        'stake_poly': stake_poly
                     })
     return matched_pairs, surebets, len(fon_matches), len(poly_matches)
 
+def calculate_stakes(surebet, budget):
+    """
+    Вычисляет суммы ставок по бюджету.
+    Возвращает (ставка_на_fon, ставка_на_poly, чистая_прибыль).
+    """
+    p1 = 1 / surebet['stake_fon']
+    p2 = 1 / surebet['stake_poly']
+    total = p1 + p2
+    stake1 = budget * p2 / total
+    stake2 = budget * p1 / total
+    profit_rub = budget / total - budget
+    return round(stake1, 2), round(stake2, 2), round(profit_rub, 2)
+
 def find_arbs_job():
-    """Фоновая задача: ищет вилки и отправляет результат."""
     try:
         _, surebets, _, _ = analyze()
         if not surebets:
             safe_send("🔍 Вилок не найдено.")
             return
-        text = "🚀 Найденные вилки (прибыль >1%):\n\n"
+
+        text = f"🚀 *Вилки (бюджет: {TOTAL_BUDGET} RUB)*\n\n"
         for s in sorted(surebets, key=lambda x: x['profit'], reverse=True):
-            text += f"{s['profit']:.2f}% | {s['f_match']}\n"
-            text += f"Схема: {s['type']}\n"
-            text += f"FON: {s['f_odds']}  POLY: {s['p_odds']}\n\n"
+            # Пропускаем вилки с прибылью менее 1%, если нужно
+            if s['profit'] < 1.0:
+                continue
+
+            stake1, stake2, profit_rub = calculate_stakes(s, TOTAL_BUDGET)
+
+            text += (
+                f"{s['profit']:.2f}% | {s['f_match']}\n"
+                f"💰 Ставка на *{s['team_fon']}* (FON): {stake1} RUB\n"
+                f"💰 Ставка на *{s['team_poly']}* (POLY): {stake2} RUB\n"
+                f"💎 Чистая прибыль: {profit_rub} RUB\n"
+                f"Схема: {s['type']}\n"
+                f"FON: {s['f_odds']}  POLY: {s['p_odds']}\n\n"
+            )
         safe_send(text)
     except Exception as e:
         safe_send(f"❌ Ошибка: {e}")
 
 def all_matches_job():
-    """Фоновая задача: отправляет все совпадения."""
     try:
         matched, _, _, _ = analyze()
         if not matched:
             safe_send("📋 Совпадений не найдено.")
             return
-        chunk_size = 30
+        chunk_size = 20
         for i in range(0, len(matched), chunk_size):
             chunk = matched[i:i+chunk_size]
             text = ""
@@ -238,7 +292,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⏸️ Мониторинг остановлен", reply_markup=get_main_keyboard())
 
     elif data == "help":
-        text = "📖 Кнопки:\n\n🔍 Поиск — ручной\n▶️ Старт — авто\n⏸️ Стоп — стоп авто\n📋 Все совпадения — показать все пары"
+        text = (
+            "📖 Помощь\n\n"
+            "🔍 Поиск — найти вилки с расчётом ставок.\n"
+            "📋 Все совпадения — показать все пары.\n"
+            "💰 Бюджет — изменить сумму для расчёта.\n"
+            "▶️/⏸️ Мониторинг — авто-поиск каждые 60 сек."
+        )
         await query.edit_message_text(text, reply_markup=get_main_keyboard())
 
     elif data == "back_to_main":
@@ -255,7 +315,6 @@ def run_monitoring():
                 print("Ошибка мониторинга:", e)
         time.sleep(60)
 
-# ------------------- MAIN -------------------
 def main():
     global bot_instance, loop
     threading.Thread(target=run_monitoring, daemon=True).start()
@@ -267,7 +326,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Бот запущен (ручной + мониторинг)")
+    print("Бот запущен (ручной + мониторинг, с расчётом ставок)")
     app.run_polling()
 
 if __name__ == "__main__":
