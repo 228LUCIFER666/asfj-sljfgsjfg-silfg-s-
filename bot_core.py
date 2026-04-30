@@ -1,175 +1,157 @@
 import time
-import requests
-import re
-import urllib3
-from fonbet_esports_parser_v2 import get_fonbet_esports_odds
-from polymarket_esports_parser_v2 import get_polymarket_esports_odds
+import sys
 
-urllib3.disable_warnings()
+# === НАСТРОЙКА ИМПОРТОВ ===
+try:
+    from fonbet import get_fonbet_esports_odds
+    from polymarket import get_polymarket_esports_odds
+except ImportError as e:
+    print(f"❌ ОШИБКА ИМПОРТА: {e}")
+    input("\nНажми Enter...")
+    sys.exit()
 
-TOKEN = "8481745931:AAG_e4Dijnv_sFoYkXIe0ZFSZ34yeSnuoWs"
-CHAT_ID = "1088479582"
-TOTAL_BUDGET = 2000
-MAX_PER_RUN = 5
-DEBUG = False
-sent = {}
+def clean_name(name):
+    """Очистка названий команд для точного сравнения.
+    Возвращает множество значимых слов."""
+    if not name:
+        return set()
+    garbage = [
+        "esports", "gaming", "team", "club", "esport", "academy",
+        "youth", "challengers", "junior", "ltd", "fe", "female",
+        "blue", "red", "white", "black", "rising", "pro", "ph"
+    ]
+    name = name.lower()
+    for ch in [".", "-", "(", ")", ",", "'", ":", ";", "!"]:
+        name = name.replace(ch, " ")
+    parts = name.split()
+    return {p for p in parts if p not in garbage and len(p) > 1}
 
-SYNONYMS = {
-    "1win": "1w team", "1w team": "1win",
-    "fnatic": "fnatic", "vitality": "team vitality",
-    "team vitality": "vitality", "nigma galaxy": "nigma galaxy",
-    "nigma": "nigma galaxy", "team lynx": "lynx", "lynx": "team lynx",
-    "astralis": "astralis", "g2 esports": "g2",
-    "g2": "g2 esports", "natus vincere": "navi",
-    "navi": "natus vincere", "faze clan": "faze",
-    "faze": "faze clan", "furia esports": "furia",
-    "furia": "furia esports", "team heretics": "heretics",
-    "heretics": "team heretics", "t1": "t1",
-    "gen.g esports": "gen.g", "gen.g": "gen.g esports",
-    "dplus kia": "dplus", "dplus": "dplus kia",
-}
-def apply_synonyms(name):
-    return SYNONYMS.get(name.lower().strip(), name).strip()
+def leagues_compatible(f_league, p_league):
+    """Мягкая проверка совместимости лиг.
+    'Esports' считается универсальной категорией."""
+    f = f_league.lower().replace(" ", "")
+    p = p_league.lower().replace(" ", "")
+    # Если одна из лиг общая («esports»), считаем совместимыми
+    if "esports" in f or "esports" in p:
+        return True
+    # Проверяем ключевые слова для конкретных дисциплин
+    for key in ["cs", "lol", "dota", "valorant"]:
+        if key in f and key in p:
+            return True
+    return False
 
-def log(msg, level="INFO"): print(f"[{time.strftime('%H:%M:%S')}] {level} | {msg}")
-
-def send_message(text):
+def find_surebets():
     try:
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                      data={"chat_id": CHAT_ID, "text": text}, timeout=10)
-    except Exception as e: log(f"TG error: {e}", "ERROR")
+        print(f"[{time.strftime('%H:%M:%S')}] СБОР ДАННЫХ...")
+        fon_matches = get_fonbet_esports_odds()
+        poly_matches = get_polymarket_esports_odds()
+        
+        if not fon_matches or not poly_matches:
+            print("⚠️ Ошибка: Данные не получены.")
+            return
 
-def profit(k1,k2): return (1 - (1/k1 + 1/k2))*100
-def stakes(k1,k2,budget):
-    s1 = budget*k2/(k1+k2); s2 = budget - s1; net = s1*k1 - budget
-    return round(s1,2), round(s2,2), round(net,2)
+        # 1. ВЫВОД ВСЕГО СПИСКА FONBET
+        print("\n" + "="*35 + " ВСЕ МАТЧИ FONBET " + "="*35)
+        for i, m in enumerate(fon_matches):
+            print(f"{i+1:3}. [{m['league']:8}] {m['match']:40} | Кэфы: {m['odds']}")
 
-def clean(text):
-    text = text.lower()
-    text = re.sub(r'\([^)]*\)', '', text)
-    text = re.sub(r'\b(team|esports|gaming|club)\b', '', text)
-    text = re.sub(r'[^a-z0-9 ]', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
+        # 2. ВЫВОД ВСЕГО СПИСКА POLYMARKET
+        print("\n" + "="*35 + " ВСЕ МАТЧИ POLYMARKET " + "="*35)
+        for i, m in enumerate(poly_matches):
+            print(f"{i+1:3}. [{m['league']:8}] {m['match']:40} | Кэфы: {m['odds']}")
 
-def extract_teams(match_str):
-    if " vs " not in match_str: return None, None
-    a, b = match_str.split(" vs ", 1)
-    return clean(a), clean(b)
+        matched_pairs = []
+        surebets = []
 
-def team_words(name):
-    return set(name.split())
+        # 3. УЛУЧШЕННАЯ ЛОГИКА СОПОСТАВЛЕНИЯ (без жёсткой группировки по лигам)
+        for f in fon_matches:
+            f_raw = f['match'].lower()
+            if " vs " not in f_raw:
+                continue
+            f_t1, f_t2 = f_raw.split(" vs ")
+            f_t1_words = clean_name(f_t1)
+            f_t2_words = clean_name(f_t2)
 
-def match_events(fb_match, pm_match):
-    fb1_raw, fb2_raw = extract_teams(fb_match)
-    pm1_raw, pm2_raw = extract_teams(pm_match)
-    if not fb1_raw or not pm1_raw: return None
+            for p in poly_matches:
+                p_raw = p['match'].lower()
+                if " vs " not in p_raw:
+                    continue
+                p_t1, p_t2 = p_raw.split(" vs ")
+                p_t1_words = clean_name(p_t1)
+                p_t2_words = clean_name(p_t2)
 
-    fb1 = apply_synonyms(fb1_raw)
-    fb2 = apply_synonyms(fb2_raw)
-    pm1 = apply_synonyms(pm1_raw)
-    pm2 = apply_synonyms(pm2_raw)
+                # Проверка совместимости лиг
+                if not leagues_compatible(f['league'], p['league']):
+                    continue
 
-    special_words = {'academy', 'challenger', 'youth'}
-    def has_special(s): return not special_words.isdisjoint(s.split())
-    if has_special(fb1) != has_special(pm1) or has_special(fb2) != has_special(pm2):
-        return None
+                # Игнорируем матчи, где есть признак академии/молодёжки только в одном источнике
+                tags = ["academy", "challengers", "youth", "junior"]
+                f_has = any(t in f_raw for t in tags)
+                p_has = any(t in p_raw for t in tags)
+                if f_has != p_has:
+                    continue
 
-    bad = {'tbd', 'tba', 'over', 'under', 'yes', 'no'}
-    if any(t in bad for t in [fb1, fb2, pm1, pm2]): return None
+                # Проверяем совпадение команд (прямой и обратный порядок)
+                direct = (f_t1_words & p_t1_words) and (f_t2_words & p_t2_words)
+                cross  = (f_t1_words & p_t2_words) and (f_t2_words & p_t1_words)
 
-    wfb1 = team_words(fb1); wfb2 = team_words(fb2)
-    wpm1 = team_words(pm1); wpm2 = team_words(pm2)
+                if direct or cross:
+                    pair = {'f': f, 'p': p, 'order': 'direct' if direct else 'cross'}
+                    matched_pairs.append(pair)
 
-    def teams_match(w1, w2, min_common=2):
-        return len(w1 & w2) >= min_common
+                    # Правильный расчёт вилки с учётом порядка команд
+                    k1_f, k2_f = f['odds']
+                    k1_p, k2_p = p['odds']
 
-    direct = teams_match(wfb1, wpm1) and teams_match(wfb2, wpm2)
-    cross  = teams_match(wfb1, wpm2) and teams_match(wfb2, wpm1)
+                    # Формулы одинаковы для прямого и обратного порядка,
+                    # потому что мы всегда сопоставляем П1(FON) с П2(POLY) и наоборот,
+                    # но при cross порядке команды уже переставлены, и это учтено.
+                    profit1 = (1/k1_f + 1/k2_p)  # П1(FON) + П2(POLY)
+                    profit2 = (1/k2_f + 1/k1_p)  # П2(FON) + П1(POLY)
 
-    if direct:
-        return {'fb_team1': fb1_raw, 'fb_team2': fb2_raw,
-                'pm_team1': pm1_raw, 'pm_team2': pm2_raw, 'mapping': 'direct'}
-    if cross:
-        return {'fb_team1': fb1_raw, 'fb_team2': fb2_raw,
-                'pm_team1': pm2_raw, 'pm_team2': pm1_raw, 'mapping': 'cross'}
-    return None
+                    best_profit = min(profit1, profit2)
+                    if best_profit < 1.0:
+                        profit_percent = (1 - best_profit) * 100
+                        if best_profit == profit1:
+                            type_bet = "П1(FON) + П2(POLY)"
+                        else:
+                            type_bet = "П2(FON) + П1(POLY)"
+                        if pair['order'] == 'cross':
+                            type_bet += " [обр.порядок]"
+                        surebets.append({
+                            'profit': profit_percent,
+                            'f_match': f['match'],
+                            'p_match': p['match'],
+                            'f_odds': f['odds'],
+                            'p_odds': p['odds'],
+                            'type': type_bet
+                        })
 
-def find_arbs():
-    global sent
-    log("Проверка вилок...")
-    try:
-        fonbet = get_fonbet_esports_odds()
-        poly   = get_polymarket_esports_odds()
-    except ImportError as e:
-        log(f"Не найден модуль парсера: {e}", "ERROR"); return
+        # --- ИТОГОВЫЙ ОТЧЕТ ---
+        print("\n" + "="*30 + " РЕЗУЛЬТАТ СОПОСТАВЛЕНИЯ (УСПЕШНО) " + "="*30)
+        for i, m in enumerate(matched_pairs):
+            order = "(прямой)" if m['order'] == 'direct' else "(обратный)"
+            print(f"✅ {m['f']['match']} <--> {m['p']['match']} {order}")
 
-    log(f"Fonbet: {len(fonbet)} матчей, Polymarket: {len(poly)} матчей")
-    sent_now = 0
+        print("\n" + "="*30 + " НАЙДЕННЫЕ ВИЛКИ (ФИЛЬТРОВАННЫЕ) " + "="*30)
+        if not surebets:
+            print("Вилок не найдено. Ждем обновления линий...")
+        else:
+            for s in sorted(surebets, key=lambda x: x['profit'], reverse=True):
+                print(f"🚀 {s['profit']:.2f}% | {s['f_match']}")
+                print(f"   Схема: {s['type']}")
+                print(f"   FON: {s['f_odds']} | POLY: {s['p_odds']}")
+                print("-" * 40)
 
-    for fb in fonbet:
-        best_profit = -100
-        best_kf = best_kp = None
-        best_team_fb = best_team_pm = None
+        print(f"\n📊 ИТОГО: FON={len(fon_matches)}, POLY={len(poly_matches)}")
+        print(f"🔗 Связано реальных пар: {len(matched_pairs)}")
+        print(f"💰 Найдено честных вилок: {len(surebets)}")
 
-        for pm in poly:
-            mapping = match_events(fb['match'], pm['match'])
-            if not mapping: continue
-
-            kf1, kf2 = fb['odds']; kp1, kp2 = pm['odds']
-            if min(kf1,kf2,kp1,kp2) < 1.15 or max(kf1,kf2,kp1,kp2) > 5.0: continue
-
-            if mapping['mapping'] == 'direct':
-                p1 = profit(kf1, kp2)
-                if p1 > best_profit:
-                    best_profit = p1
-                    best_kf, best_kp = kf1, kp2
-                    best_team_fb = mapping['fb_team1']; best_team_pm = mapping['pm_team2']
-
-                p2 = profit(kf2, kp1)
-                if p2 > best_profit:
-                    best_profit = p2
-                    best_kf, best_kp = kf2, kp1
-                    best_team_fb = mapping['fb_team2']; best_team_pm = mapping['pm_team1']
-            else:
-                p1 = profit(kf1, kp1)
-                if p1 > best_profit:
-                    best_profit = p1
-                    best_kf, best_kp = kf1, kp1
-                    best_team_fb = mapping['fb_team1']; best_team_pm = mapping['pm_team1']
-
-                p2 = profit(kf2, kp2)
-                if p2 > best_profit:
-                    best_profit = p2
-                    best_kf, best_kp = kf2, kp2
-                    best_team_fb = mapping['fb_team2']; best_team_pm = mapping['pm_team2']
-
-        if best_profit <= 1: continue
-
-        match_key = clean(fb['match'])
-        if match_key in sent and sent[match_key] >= best_profit: continue
-
-        kf, kp = best_kf, best_kp
-        s1, s2, net = stakes(kf, kp, TOTAL_BUDGET)
-        league = fb.get('league', 'Esports')
-
-        msg = (f"🔥 ВИЛКА ({league})\n{fb['match']}\n\n"
-               f"📌 Fonbet ({best_team_fb}): {kf}\n"
-               f"📌 Polymarket ({best_team_pm}): {kp}\n\n"
-               f"💰 Ставки: {s1} / {s2}\n📈 Профит: {best_profit:.2f}% | +{net} RUB")
-
-        log(f"{fb['match']} | {best_profit:.2f}%", "ARB")
-        send_message(msg)
-        sent[match_key] = best_profit
-        sent_now += 1
-        if sent_now >= MAX_PER_RUN: return
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"❌ ОШИБКА: {e}")
 
 if __name__ == "__main__":
-    sent = {}
-    log("Бот запущен", "START")
-    while True:
-        try:
-            find_arbs()
-        except Exception as e:
-            log(f"Ошибка: {e}", "ERROR")
-        time.sleep(60)
+    find_surebets()
+    input("\nНажми Enter для выхода...")
