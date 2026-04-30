@@ -1,33 +1,18 @@
 import asyncio
-import threading
 import time
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-import sys
-
-# Сборщики коэффициентов
 from fonbet import get_fonbet_esports_odds
 from polymarket import get_polymarket_esports_odds
 
 TOKEN = os.getenv("BOT_TOKEN") or "8481745931:AAG_e4Dijnv_sFoYkXIe0ZFSZ34yeSnuoWs"
 
-# Глобальные переменные
-bot_instance = None
-loop = None           # цикл событий бота
-user_chat_id = None
+# Глобальные настройки
 TOTAL_BUDGET = 10000  # по умолчанию
+user_chat_id = None
 
-def safe_send(text, parse_mode=None):
-    """Потокобезопасная отправка сообщения в чат."""
-    global bot_instance, loop, user_chat_id
-    if bot_instance and loop and user_chat_id:
-        asyncio.run_coroutine_threadsafe(
-            bot_instance.send_message(chat_id=user_chat_id, text=text, parse_mode=parse_mode),
-            loop
-        )
-
-# ------------------- Логика сравнения и поиска вилок -------------------
+# ------------------- Логика сравнения (без потоков) -------------------
 def clean_name(name):
     if not name:
         return set()
@@ -53,11 +38,11 @@ def leagues_compatible(f_league, p_league):
     return False
 
 def analyze():
-    """Возвращает (matched_pairs, surebets)"""
+    """Синхронный сбор и сопоставление. Возвращает (matched_pairs, surebets, len_fon, len_poly)"""
     fon_matches = get_fonbet_esports_odds()
     poly_matches = get_polymarket_esports_odds()
     if not fon_matches or not poly_matches:
-        return [], [], [], []  # также вернём исходные списки для статистики
+        return [], [], 0, 0
 
     matched_pairs = []
     surebets = []
@@ -115,42 +100,7 @@ def analyze():
                         'p_odds': p['odds'],
                         'type': type_bet
                     })
-    return matched_pairs, surebets, fon_matches, poly_matches
-
-def find_arbs():
-    """Вызывается в отдельном потоке, отправляет результат в чат."""
-    try:
-        _, surebets, fon_matches, poly_matches = analyze()
-        if not surebets:
-            safe_send("🔍 Вилок не найдено.")
-            return
-        text = "🚀 *Найденные вилки (прибыль >1%):*\n\n"
-        for s in sorted(surebets, key=lambda x: x['profit'], reverse=True):
-            text += f"{s['profit']:.2f}% | {s['f_match']}\nСхема: {s['type']}\nFON: {s['f_odds']} | POLY: {s['p_odds']}\n\n"
-        safe_send(text, parse_mode='Markdown')
-    except Exception as e:
-        safe_send(f"❌ Ошибка: {e}")
-
-def all_matches():
-    """Отправляет все совпавшие пары с коэффициентами."""
-    try:
-        matched_pairs, _, fon_matches, poly_matches = analyze()
-        if not matched_pairs:
-            safe_send("📋 Совпадений не найдено.")
-            return
-        # Отправляем порциями по 30 пар
-        chunk_size = 30
-        for i in range(0, len(matched_pairs), chunk_size):
-            chunk = matched_pairs[i:i+chunk_size]
-            text = ""
-            for pair in chunk:
-                f = pair['f']
-                p = pair['p']
-                order = "прямой" if pair['order'] == 'direct' else "обратный"
-                text += f"✅ {f['match']} ({f['league']}) vs {p['match']} ({p['league']}) [{order}]\nFON: {f['odds']} POLY: {p['odds']}\n\n"
-            safe_send(text)
-    except Exception as e:
-        safe_send(f"❌ Ошибка: {e}")
+    return matched_pairs, surebets, len(fon_matches), len(poly_matches)
 
 # ------------------- Клавиатуры -------------------
 def get_main_keyboard():
@@ -173,7 +123,7 @@ def get_budget_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ------------------- Обработчики -------------------
+# ------------------- Асинхронные обработчики -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global user_chat_id
     user_chat_id = update.effective_chat.id
@@ -196,15 +146,35 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "find_arbs":
         await query.edit_message_text("🔍 Ищу вилки...", reply_markup=get_main_keyboard())
-        threading.Thread(target=find_arbs).start()
-        await asyncio.sleep(1)
-        await query.edit_message_text("✅ Поиск запущен. Результаты придут в чат.", reply_markup=get_main_keyboard())
+        # Выполняем синхронную analyze в отдельном потоке, чтобы не блокировать event loop
+        matched, surebets, f_count, p_count = await asyncio.to_thread(analyze)
+        if not surebets:
+            await context.bot.send_message(chat_id=user_chat_id, text="🔍 Вилок не найдено.")
+        else:
+            text = "🚀 *Найденные вилки (прибыль >1%):*\n\n"
+            for s in sorted(surebets, key=lambda x: x['profit'], reverse=True):
+                text += f"{s['profit']:.2f}% | {s['f_match']}\nСхема: {s['type']}\nFON: {s['f_odds']} | POLY: {s['p_odds']}\n\n"
+            await context.bot.send_message(chat_id=user_chat_id, text=text, parse_mode='Markdown')
+        await query.edit_message_text("✅ Поиск завершён.", reply_markup=get_main_keyboard())
 
     elif data == "all_matches":
         await query.edit_message_text("📋 Собираю совпадения...", reply_markup=get_main_keyboard())
-        threading.Thread(target=all_matches).start()
-        await asyncio.sleep(1)
-        await query.edit_message_text("✅ Отправка начата.", reply_markup=get_main_keyboard())
+        matched, surebets, f_count, p_count = await asyncio.to_thread(analyze)
+        if not matched:
+            await context.bot.send_message(chat_id=user_chat_id, text="📋 Совпадений не найдено.")
+        else:
+            # Отправляем порциями по 30 пар
+            chunk_size = 30
+            for i in range(0, len(matched), chunk_size):
+                chunk = matched[i:i+chunk_size]
+                text = ""
+                for pair in chunk:
+                    f = pair['f']
+                    p = pair['p']
+                    order = "прямой" if pair['order'] == 'direct' else "обратный"
+                    text += f"✅ {f['match']} ({f['league']}) vs {p['match']} ({p['league']}) [{order}]\nFON: {f['odds']} POLY: {p['odds']}\n\n"
+                await context.bot.send_message(chat_id=user_chat_id, text=text)
+        await query.edit_message_text("✅ Готово.", reply_markup=get_main_keyboard())
 
     elif data == "status":
         text = (f"📊 Статус\n\n⚙️ Режим: ручной\n💰 Бюджет: {TOTAL_BUDGET} RUB\n"
@@ -230,10 +200,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Главное меню", reply_markup=get_main_keyboard())
 
 def main():
-    global bot_instance, loop
     app = Application.builder().token(TOKEN).build()
-    bot_instance = app.bot
-    loop = asyncio.get_event_loop()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_callback))
     print("Бот запущен (ручной режим)")
