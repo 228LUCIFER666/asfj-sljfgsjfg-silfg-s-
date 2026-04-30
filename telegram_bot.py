@@ -14,8 +14,18 @@ TOKEN = os.getenv("BOT_TOKEN") or "8481745931:AAG_e4Dijnv_sFoYkXIe0ZFSZ34yeSnuoW
 
 # Глобальные переменные
 bot_instance = None
+loop = None           # цикл событий бота
 user_chat_id = None
 TOTAL_BUDGET = 10000  # по умолчанию
+
+def safe_send(text, parse_mode=None):
+    """Потокобезопасная отправка сообщения в чат."""
+    global bot_instance, loop, user_chat_id
+    if bot_instance and loop and user_chat_id:
+        asyncio.run_coroutine_threadsafe(
+            bot_instance.send_message(chat_id=user_chat_id, text=text, parse_mode=parse_mode),
+            loop
+        )
 
 # ------------------- Логика сравнения и поиска вилок -------------------
 def clean_name(name):
@@ -47,7 +57,7 @@ def analyze():
     fon_matches = get_fonbet_esports_odds()
     poly_matches = get_polymarket_esports_odds()
     if not fon_matches or not poly_matches:
-        return [], []
+        return [], [], [], []  # также вернём исходные списки для статистики
 
     matched_pairs = []
     surebets = []
@@ -105,34 +115,28 @@ def analyze():
                         'p_odds': p['odds'],
                         'type': type_bet
                     })
-    return matched_pairs, surebets
+    return matched_pairs, surebets, fon_matches, poly_matches
 
 def find_arbs():
     """Вызывается в отдельном потоке, отправляет результат в чат."""
-    global bot_instance, user_chat_id
-    if not bot_instance or not user_chat_id:
-        return
     try:
-        _, surebets = analyze()
+        _, surebets, fon_matches, poly_matches = analyze()
         if not surebets:
-            bot_instance.send_message(chat_id=user_chat_id, text="🔍 Вилок не найдено.")
+            safe_send("🔍 Вилок не найдено.")
             return
         text = "🚀 *Найденные вилки (прибыль >1%):*\n\n"
         for s in sorted(surebets, key=lambda x: x['profit'], reverse=True):
             text += f"{s['profit']:.2f}% | {s['f_match']}\nСхема: {s['type']}\nFON: {s['f_odds']} | POLY: {s['p_odds']}\n\n"
-        bot_instance.send_message(chat_id=user_chat_id, text=text, parse_mode='Markdown')
+        safe_send(text, parse_mode='Markdown')
     except Exception as e:
-        bot_instance.send_message(chat_id=user_chat_id, text=f"❌ Ошибка: {e}")
+        safe_send(f"❌ Ошибка: {e}")
 
 def all_matches():
     """Отправляет все совпавшие пары с коэффициентами."""
-    global bot_instance, user_chat_id
-    if not bot_instance or not user_chat_id:
-        return
     try:
-        matched_pairs, _ = analyze()
+        matched_pairs, _, fon_matches, poly_matches = analyze()
         if not matched_pairs:
-            bot_instance.send_message(chat_id=user_chat_id, text="📋 Совпадений не найдено.")
+            safe_send("📋 Совпадений не найдено.")
             return
         # Отправляем порциями по 30 пар
         chunk_size = 30
@@ -144,9 +148,9 @@ def all_matches():
                 p = pair['p']
                 order = "прямой" if pair['order'] == 'direct' else "обратный"
                 text += f"✅ {f['match']} ({f['league']}) vs {p['match']} ({p['league']}) [{order}]\nFON: {f['odds']} POLY: {p['odds']}\n\n"
-            bot_instance.send_message(chat_id=user_chat_id, text=text)
+            safe_send(text)
     except Exception as e:
-        bot_instance.send_message(chat_id=user_chat_id, text=f"❌ Ошибка: {e}")
+        safe_send(f"❌ Ошибка: {e}")
 
 # ------------------- Клавиатуры -------------------
 def get_main_keyboard():
@@ -193,13 +197,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "find_arbs":
         await query.edit_message_text("🔍 Ищу вилки...", reply_markup=get_main_keyboard())
         threading.Thread(target=find_arbs).start()
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
         await query.edit_message_text("✅ Поиск запущен. Результаты придут в чат.", reply_markup=get_main_keyboard())
 
     elif data == "all_matches":
         await query.edit_message_text("📋 Собираю совпадения...", reply_markup=get_main_keyboard())
         threading.Thread(target=all_matches).start()
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
         await query.edit_message_text("✅ Отправка начата.", reply_markup=get_main_keyboard())
 
     elif data == "status":
@@ -226,9 +230,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Главное меню", reply_markup=get_main_keyboard())
 
 def main():
-    global bot_instance
+    global bot_instance, loop
     app = Application.builder().token(TOKEN).build()
     bot_instance = app.bot
+    loop = asyncio.get_event_loop()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_callback))
     print("Бот запущен (ручной режим)")
