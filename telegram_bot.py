@@ -17,7 +17,7 @@ CHAT_ID = os.getenv("USER_ID")
 bot_instance = None
 loop = None
 user_chat_id = None
-TOTAL_BUDGET = 1000          # ← начальный бюджет (руб.)
+TOTAL_BUDGET = 1000          # начальный бюджет (руб.)
 monitoring_active = False
 
 # ------------------- БЕЗОПАСНАЯ ОТПРАВКА -------------------
@@ -116,12 +116,11 @@ def analyze():
                     profit_percent = (1 - best) * 100
                     if best == profit1:
                         # Ставим на f_t1 в FON и на p_t2 в POLY
-                        # Но при cross порядке p_t2 = f_t1 (названия совпадают)
                         team_name_f = f_t1
                         team_name_p = p_t2
                         type_bet = "П1(FON) + П2(POLY)"
-                        stake_fon = k1_f
-                        stake_poly = k2_p
+                        stake_fon = k1_f   # коэффициент для ставки на FON
+                        stake_poly = k2_p  # коэффициент для ставки на POLY
                     else:
                         # Ставим на f_t2 в FON и на p_t1 в POLY
                         team_name_f = f_t2
@@ -152,13 +151,14 @@ def calculate_stakes(surebet, budget):
     Вычисляет суммы ставок по бюджету.
     Возвращает (ставка_на_fon, ставка_на_poly, чистая_прибыль).
     """
-    p1 = 1 / surebet['stake_fon']
-    p2 = 1 / surebet['stake_poly']
-    total = p1 + p2
-    stake1 = budget * p2 / total
-    stake2 = budget * p1 / total
+    p_fon = 1 / surebet['stake_fon']   # обратный коэффициент FON
+    p_poly = 1 / surebet['stake_poly'] # обратный коэффициент POLY
+    total = p_fon + p_poly
+    # ставка пропорциональна обратному коэффициенту
+    stake_fon = budget * p_fon / total
+    stake_poly = budget * p_poly / total
     profit_rub = budget / total - budget
-    return round(stake1, 2), round(stake2, 2), round(profit_rub, 2)
+    return round(stake_fon, 2), round(stake_poly, 2), round(profit_rub, 2)
 
 def find_arbs_job():
     try:
@@ -169,7 +169,6 @@ def find_arbs_job():
 
         text = f"🚀 *Вилки (бюджет: {TOTAL_BUDGET} RUB)*\n\n"
         for s in sorted(surebets, key=lambda x: x['profit'], reverse=True):
-            # Пропускаем вилки с прибылью менее 1%, если нужно
             if s['profit'] < 1.0:
                 continue
 
@@ -326,7 +325,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Бот запущен (ручной + мониторинг, с расчётом ставок)")
+    print("Бот запущен (ручной + мониторинг, исправлены ставки)")
     app.run_polling()
 
 if __name__ == "__main__":
